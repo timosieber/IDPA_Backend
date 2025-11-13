@@ -1,4 +1,4 @@
-import type { Chatbot, Session, Message } from "../lib/prisma-client.js";
+import type { Chatbot, Session, Message } from "@prisma/client";
 import { BadRequestError } from "../utils/errors.js";
 import { knowledgeService } from "./knowledge.service.js";
 import { llmService } from "./llm.service.js";

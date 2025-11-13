@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { MessageRole } from "../lib/prisma-client.js";
+import type { MessageRole } from "@prisma/client";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 

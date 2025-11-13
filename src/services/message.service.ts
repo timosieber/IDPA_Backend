@@ -1,4 +1,4 @@
-import type { Message } from "../lib/prisma-client.js";
+import type { Message } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
 class MessageService {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Prisma } from "../lib/prisma-client.js";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { BadRequestError, ForbiddenError, NotFoundError } from "../utils/errors.js";
 import { normalizeHostname } from "../utils/domain.js";

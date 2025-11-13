@@ -1,6 +1,6 @@
 import { addMinutes, isBefore } from "date-fns";
 import { nanoid } from "nanoid";
-import type { Prisma } from "../lib/prisma-client.js";
+import type { Prisma } from "@prisma/client";
 import { env } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
 import { ensureDomainAllowed } from "../utils/domain.js";

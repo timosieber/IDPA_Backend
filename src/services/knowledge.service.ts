@@ -1,4 +1,4 @@
-import type { Prisma } from "../lib/prisma-client.js";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { BadRequestError, NotFoundError } from "../utils/errors.js";
 import { chunkText } from "../utils/chunk-text.js";
