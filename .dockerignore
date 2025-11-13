@@ -3,7 +3,6 @@ dist
 .git
 .gitignore
 Dockerfile
-README.md
 docs
 todo.md
 prisma/dev.db
