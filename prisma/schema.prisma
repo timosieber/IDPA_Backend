@@ -1,0 +1,117 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum ChatbotStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum MessageRole {
+  system
+  user
+  assistant
+}
+
+enum KnowledgeSourceType {
+  URL
+  TEXT
+  FILE
+}
+
+enum KnowledgeSourceStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  createdAt DateTime  @default(now())
+  chatbots  Chatbot[]
+}
+
+model Chatbot {
+  id             String               @id @default(cuid())
+  userId         String
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  allowedDomains Json                 @default("[]")
+  theme          Json?
+  model          String               @default("gpt-4o-mini")
+  status         ChatbotStatus        @default(DRAFT)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+  sessions       Session[]
+  knowledgeSources KnowledgeSource[]
+
+  @@index([userId])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  chatbotId  String
+  chatbot    Chatbot  @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  origin     String
+  ip         String?
+  token      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  messages   Message[]
+
+  @@index([chatbotId])
+  @@index([token])
+}
+
+model Message {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role      MessageRole
+  content   String
+  createdAt DateTime    @default(now())
+
+  @@index([sessionId])
+}
+
+model KnowledgeSource {
+  id          String               @id @default(cuid())
+  chatbotId   String
+  chatbot     Chatbot              @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  type        KnowledgeSourceType
+  label       String
+  uri         String?
+  status      KnowledgeSourceStatus @default(PENDING)
+  metadata    Json?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  embeddings  Embedding[]
+
+  @@index([chatbotId])
+}
+
+model Embedding {
+  id                String          @id @default(cuid())
+  knowledgeSourceId String
+  knowledgeSource   KnowledgeSource @relation(fields: [knowledgeSourceId], references: [id], onDelete: Cascade)
+  vectorId          String
+  content           String
+  tokenCount        Int
+  createdAt         DateTime        @default(now())
+
+  @@index([knowledgeSourceId])
+  @@index([vectorId])
+}

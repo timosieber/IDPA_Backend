@@ -1,0 +1,240 @@
+openapi: 3.1.0
+info:
+  title: IDPA Chatbot API
+  version: 0.1.0
+servers:
+  - url: http://localhost:4000
+paths:
+  /api/chatbots:
+    get:
+      summary: List chatbots
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+    post:
+      summary: Create chatbot
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatbotInput"
+      responses:
+        "201":
+          description: Created
+  /api/chatbots/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get chatbot
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Success
+    patch:
+      summary: Update chatbot
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatbotInput"
+      responses:
+        "200":
+          description: Updated
+    delete:
+      summary: Delete chatbot
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Deleted
+  /api/chat/sessions:
+    post:
+      summary: Create chat session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatbotId]
+              properties:
+                chatbotId:
+                  type: string
+      responses:
+        "201":
+          description: Created
+  /api/chat/messages:
+    post:
+      summary: Send chat message
+      security:
+        - bearerWidget: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sessionId, message]
+              properties:
+                sessionId:
+                  type: string
+                message:
+                  type: string
+      responses:
+        "200":
+          description: Answer
+  /api/knowledge/sources:
+    get:
+      summary: List knowledge sources
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: chatbotId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Success
+  /api/knowledge/sources/text:
+    post:
+      summary: Add text source
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+            content:
+              application/json:
+                schema:
+                  type: object
+                  required: [chatbotId, label, content]
+                  properties:
+                    chatbotId:
+                      type: string
+                    label:
+                      type: string
+                    content:
+                      type: string
+      responses:
+        "201":
+          description: Created
+  /api/knowledge/sources/scrape:
+    post:
+      summary: Crawl website and ingest as knowledge source
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatbotId, startUrls]
+              properties:
+                chatbotId:
+                  type: string
+                startUrls:
+                  type: array
+                  items:
+                    type: string
+                    format: uri
+                  minItems: 1
+                  maxItems: 5
+                maxDepth:
+                  type: integer
+                  minimum: 0
+                  maximum: 5
+                maxPages:
+                  type: integer
+                  minimum: 1
+                  maximum: 50
+                respectRobotsTxt:
+                  type: boolean
+                includeGlobs:
+                  type: array
+                  items:
+                    type: string
+                excludeGlobs:
+                  type: array
+                  items:
+                    type: string
+                rateLimitPerHost:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                maxConcurrency:
+                  type: integer
+                  minimum: 1
+                  maximum: 20
+                allowFullDownload:
+                  type: boolean
+      responses:
+        "201":
+          description: Ingestion result
+  /api/knowledge/sources/{id}:
+    delete:
+      summary: Delete knowledge source
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Appwrite JWT issued for dashboard users.
+    bearerWidget:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived widget session token.
+  schemas:
+    ChatbotInput:
+      type: object
+      required: [name, allowedDomains]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        allowedDomains:
+          type: array
+          items:
+            type: string
+        theme:
+          type: object
+          properties:
+            primaryColor:
+              type: string
+            backgroundColor:
+              type: string
+            radius:
+              type: number
+        model:
+          type: string
+        status:
+          type: string
+          enum: [ACTIVE, DRAFT, PAUSED, ARCHIVED]
