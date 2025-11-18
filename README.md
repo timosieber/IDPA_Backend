@@ -21,6 +21,8 @@ npm run prisma:seed         # optionales Demo-Setup
 npm run dev                 # startet Server auf PORT (default 4000)
 ```
 
+→ Für den kompletten Produktions-Deploy (Appwrite, Apify, Docker, Snippet) siehe `docs/deployment.md`.
+
 ## Nützliche Scripts
 - `npm run dev` – tsx-watch Dev-Server
 - `npm run build && npm start` – Produktion
@@ -48,6 +50,9 @@ Alle Variablen siehe `.env.example`.
 | `OPENAI_COMPLETIONS_MODEL`, `OPENAI_EMBEDDINGS_MODEL` | Modellnamen |
 | `SCRAPER_DIR` | Pfad zum `IDPA-Scraper` Projekt (für Web/PDF-Crawling) |
 | `PERPLEXITY_API_KEY` | Optionaler Key für PDF-Extraktion über Perplexity Sonar |
+| `SCRAPER_APIFY_ACTOR_ID` | Optional: Aktiviert den Apify Runner (z. B. `timo.sieber~idpa-scraper`) |
+| `SCRAPER_APIFY_API_TOKEN` | API-Token für Apify, wird zusammen mit `SCRAPER_APIFY_ACTOR_ID` benötigt |
+| `SCRAPER_APIFY_BASE_URL` | Apify API-Basis (default `https://api.apify.com/v2`) |
 
 ## API-Überblick
 → vollständige Spezifikation: `docs/openapi.yaml`
@@ -70,22 +75,23 @@ DELETE /api/knowledge/sources/:id   # Quelle löschen
 
 ### Auth
 - Dashboard-Endpoints (`/api/chatbots`, `/api/knowledge`) verlangen gültiges Appwrite-JWT im `Authorization: Bearer <token>` Header.
-- Öffentliche Widget-Endpoints erstellen/prüfen Sessions via signierte Tokens; Domains müssen im Chatbot erlaubt sein.
+- Öffentliche Widget-Endpoints erstellen/prüfen Sessions via signierte Tokens. Missbrauch wird serverseitig per IP-Limitierung (5 Requests/Minute) gebremst – es ist keine Domain-Whitelist mehr nötig.
 
 ### Wissensbasis & Retrieval
 - Textquellen werden in Chunks zerteilt, eingebettet und (optional) in Pinecone gespeichert.
 - Ohne Pinecone-Config greift ein in-memory Vector Store (nur für Dev geeignet).
 - Der integrierte Scraper nutzt das separate Projekt [`IDPA-Scraper`](../IDPA-Scraper) eins zu eins (inkl. Playwright/Readability, PDF.js und optional Perplexity Sonar). Ergebnisdatensätze werden nach dem Lauf gechunkt und direkt in die Vektor-Datenbank übernommen.
 - Vor Nutzung bitte im `IDPA-Scraper`-Ordner einmal `npm install` und optional `npm run build` ausführen; `SCRAPER_DIR` muss auf diesen Pfad zeigen.
+- Alternativ lässt sich derselbe Actor auf Apify hosten. Sobald `SCRAPER_APIFY_ACTOR_ID` + `SCRAPER_APIFY_API_TOKEN` gesetzt sind, wird automatisch der Apify-Runner verwendet und die lokale Node-Integration entfällt.
 
 ## Entwicklungstipps
 - `.env.example` kopieren → `.env` und Werte setzen.
 - Mit `ALLOW_DEBUG_HEADERS=true` kann in lokalen Tests via `x-mock-user-id` ein Dashboard-User simuliert werden.
-- `POST /api/chat/sessions` muss mit korrektem `Origin`-Header aufgerufen werden (entspricht erlaubter Domain).
+- Widget-Endpoints (`/api/chat/*`) drosseln automatisch auf 5 Requests pro Minute und IP. Damit reicht das Einbinden des Snippets – kein Origin-Header oder Domain-Whitelist erforderlich.
 - Für Produktionsbetrieb Datenbank + Pinecone/OpenAI konfigurieren und `VECTOR_DB_PROVIDER=pinecone` setzen.
 - Für Railway-Deployments:
   1. `Dockerfile` und `.dockerignore` sind bereits vorbereitet.
   2. Neues Railway-Projekt erstellen → „Deploy from GitHub“ → Repo verbinden.
   3. In den Railway-Settings die notwendigen Env-Variablen setzen (`DATABASE_URL`, `JWT_SECRET`, `SCRAPER_DIR`, etc.). Für SQLite sollte auf Railway eine externe DB (z. B. Postgres) verwendet werden.
   4. Build command: `npm run build` (über Docker automatisch) – Start command: `node dist/index.js`.
-  5. Optional: separaten Service für den `IDPA-Scraper` auf Railway deployen, falls der Scraper nicht lokal ausgeführt werden soll. Dann `SCRAPER_DIR` bzw. `scraperRunner` auf eine Remote-API umstellen.
+  5. Optional: separaten Service für den `IDPA-Scraper` auf Railway deployen oder auf Apify hosten. Für Apify einfach den Actor + Token via `SCRAPER_APIFY_*` setzen, andernfalls weiterhin `SCRAPER_DIR` konfigurieren.

@@ -8,3 +8,11 @@ export const apiRateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Zu viele Anfragen – bitte später erneut versuchen." },
 });
+
+export const widgetRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Chatbot: Zu viele Anfragen von dieser IP – bitte kurz warten." },
+});

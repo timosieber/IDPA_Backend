@@ -5,29 +5,10 @@ import { spawn } from "node:child_process";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import { BadRequestError, ServiceUnavailableError } from "../../utils/errors.js";
+import { buildScraperInputPayload } from "./input-utils.js";
 import type { DatasetItem, ScrapeOptions } from "./types.js";
 
 const TMP_PREFIX = "idpa-scraper-";
-
-const DEFAULT_INPUT = {
-  respectRobotsTxt: true,
-  includeGlobs: [] as string[],
-  excludeGlobs: [] as string[],
-  maxDepth: 2,
-  maxPages: undefined as number | undefined,
-  maxConcurrency: 6,
-  rateLimitPerHost: 5,
-  rangeChunkSize: 65536,
-  maxPdfBytesTotal: 16 * 1024 * 1024,
-  allowFullDownload: false,
-  timeoutHtmlMs: 45000,
-  timeoutHeadMs: 15000,
-  timeoutPdfOpenMs: 45000,
-  doImageHead: true,
-  doImageRangeMeta: false,
-};
-
-const ensureArray = (values?: string[]) => Array.from(new Set(values ?? [])).filter(Boolean);
 
 class IdpaScraperRunner {
   private ensureConfigured() {
@@ -60,21 +41,8 @@ class IdpaScraperRunner {
         mkdir(requestQueueDir, { recursive: true }),
       ]);
 
-      const normalizedUrls = ensureArray(options.startUrls).map((url) => ({ url }));
-
-      const inputPayload = {
-        ...DEFAULT_INPUT,
-        startUrls: normalizedUrls,
-        maxDepth: options.maxDepth ?? DEFAULT_INPUT.maxDepth,
-        maxPages: options.maxPages ?? DEFAULT_INPUT.maxPages,
-        respectRobotsTxt: options.respectRobotsTxt ?? DEFAULT_INPUT.respectRobotsTxt,
-        includeGlobs: ensureArray(options.includeGlobs),
-        excludeGlobs: ensureArray(options.excludeGlobs),
-        maxConcurrency: options.maxConcurrency ?? DEFAULT_INPUT.maxConcurrency,
-        rateLimitPerHost: options.rateLimitPerHost ?? DEFAULT_INPUT.rateLimitPerHost,
-        allowFullDownload: options.allowFullDownload ?? DEFAULT_INPUT.allowFullDownload,
-        perplexityApiKey: env.PERPLEXITY_API_KEY ?? undefined,
-      };
+      const extras = env.PERPLEXITY_API_KEY ? { perplexityApiKey: env.PERPLEXITY_API_KEY } : undefined;
+      const inputPayload = buildScraperInputPayload(options, extras);
 
       const inputPath = path.join(keyValueStoreDir, "INPUT.json");
       await writeFile(inputPath, JSON.stringify(inputPayload, null, 2), "utf-8");
@@ -150,4 +118,4 @@ class IdpaScraperRunner {
   }
 }
 
-export const scraperRunner = new IdpaScraperRunner();
+export const idpaScraperRunner = new IdpaScraperRunner();

@@ -214,7 +214,7 @@ components:
   schemas:
     ChatbotInput:
       type: object
-      required: [name, allowedDomains]
+      required: [name]
       properties:
         name:
           type: string
@@ -224,6 +224,7 @@ components:
           type: array
           items:
             type: string
+          description: Optional Liste erlaubter Domains (kann leer bleiben).
         theme:
           type: object
           properties:

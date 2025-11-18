@@ -5,7 +5,7 @@ import { chunkText } from "../utils/chunk-text.js";
 import { chatbotService } from "./chatbot.service.js";
 import { embeddingService } from "./embedding.service.js";
 import { getVectorStore } from "./vector-store/index.js";
-import { scraperRunner } from "./scraper/idpa-runner.js";
+import { scraperRunner } from "./scraper/index.js";
 import type { ScrapeOptions } from "./scraper/types.js";
 
 const vectorStore = getVectorStore();

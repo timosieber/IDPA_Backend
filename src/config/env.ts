@@ -33,6 +33,9 @@ const envSchema = z.object({
   OPENAI_EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
   SCRAPER_DIR: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(),
+  SCRAPER_APIFY_ACTOR_ID: z.string().optional(),
+  SCRAPER_APIFY_API_TOKEN: z.string().optional(),
+  SCRAPER_APIFY_BASE_URL: z.string().default("https://api.apify.com/v2"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -52,6 +55,7 @@ export const env = {
   ...parsed.data,
   CORS_ALLOWED_ORIGINS_LIST: allowedOrigins,
   SCRAPER_DIR: defaultScraperDir,
+  SCRAPER_APIFY_BASE_URL: parsed.data.SCRAPER_APIFY_BASE_URL ?? "https://api.apify.com/v2",
 };
 
 export const isProduction = env.NODE_ENV === "production";

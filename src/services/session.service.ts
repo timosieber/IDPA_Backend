@@ -3,7 +3,6 @@ import { nanoid } from "nanoid";
 import type { Prisma } from "@prisma/client";
 import { env } from "../config/env.js";
 import { prisma } from "../lib/prisma.js";
-import { ensureDomainAllowed } from "../utils/domain.js";
 import { BadRequestError, ForbiddenError, NotFoundError, UnauthorizedError } from "../utils/errors.js";
 import { hashToken, signSessionToken, verifySessionToken } from "../utils/token.js";
 import { logger } from "../lib/logger.js";
@@ -25,8 +24,6 @@ class SessionService {
     if (chatbot.status !== "ACTIVE") {
       throw new ForbiddenError("Chatbot ist nicht aktiv");
     }
-
-    ensureDomainAllowed(origin, chatbot.allowedDomains as string[]);
 
     const expiresAt = addMinutes(new Date(), env.SESSION_TTL_MINUTES);
     const sessionId = nanoid(21);

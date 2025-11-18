@@ -6,7 +6,7 @@
 - Appwrite SDK for admin auth, JWT + nanoid for widget sessions
 - Pino logging, rate limiting, Zod validation
 - OpenAI (LLM & embeddings) + Pinecone/Mem vector store
-- External `IDPA-Scraper` integration for ingesting web/PDF knowledge
+- External `IDPA-Scraper` integration (local Node runner or Apify-hosted actor) for ingesting web/PDF knowledge
 
 ## Solution Overview
 1. **Project Setup**
@@ -29,13 +29,13 @@
    - Stored fields: description, allowed domains, theme JSON, model, status.
 
 5. **Widget APIs**
-   - `POST /api/chat/sessions`: verifies Origin/Referer, issues short-lived JWT, stores hashed token.
+   - `POST /api/chat/sessions`: erstellt Sessions (kein Domain-Whitelist-Erfordernis mehr), IP-Limit 5 Requests/Minute, schreibt hashed Token.
    - `POST /api/chat/messages`: validates token, loads conversation history, retrieves knowledge context, calls LLM, stores assistant reply.
 
 6. **Knowledge Sources**
    - Manual text ingestion (`POST /api/knowledge/sources/text`).
    - Full crawl ingestion via `POST /api/knowledge/sources/scrape`:
-     - Spawns the `IDPA-Scraper` actor locally (configurable path + Perplexity key).
+     - Spawns the `IDPA-Scraper` actor lokal oder triggert den Apify-Actor (je nach gesetzten `SCRAPER_APIFY_*` Variablen, inkl. optionaler Perplexity-Keys).
      - Reads dataset output (pages + PDFs), chunks text, generates embeddings, stores metadata (headings/lang/http info).
      - Re-ingestion wipes previous embeddings/vectors before writing new ones.
    - List + delete endpoints manage existing sources.

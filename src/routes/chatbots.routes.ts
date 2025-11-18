@@ -7,7 +7,7 @@ const router = Router();
 const chatbotSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
-  allowedDomains: z.array(z.string().min(2)),
+  allowedDomains: z.array(z.string().min(2)).optional(),
   theme: z
     .object({
       primaryColor: z.string().optional(),

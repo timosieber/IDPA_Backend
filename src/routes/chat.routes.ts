@@ -4,8 +4,10 @@ import { sessionService } from "../services/session.service.js";
 import { chatService } from "../services/chat.service.js";
 import { extractBearerToken } from "../utils/token.js";
 import { BadRequestError } from "../utils/errors.js";
+import { widgetRateLimiter } from "../middleware/rate-limit.js";
 
 const router = Router();
+router.use(widgetRateLimiter);
 
 const sessionSchema = z.object({
   chatbotId: z.string().min(8),

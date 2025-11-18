@@ -16,18 +16,18 @@ const themeSchema = z
 export interface ChatbotPayload {
   name: string;
   description?: string | undefined;
-  allowedDomains: string[];
+  allowedDomains?: string[] | undefined;
   theme?: z.infer<typeof themeSchema> | undefined;
   model?: string | undefined;
   status?: "ACTIVE" | "DRAFT" | "PAUSED" | "ARCHIVED" | undefined;
 }
 
 class ChatbotService {
-  private sanitizeDomains(domains: string[]) {
-    const unique = Array.from(new Set(domains.map(normalizeHostname)));
-    if (!unique.length) {
-      throw new BadRequestError("Mindestens eine Domain ist erforderlich");
+  private sanitizeDomains(domains?: string[]) {
+    if (!domains?.length) {
+      return [];
     }
+    const unique = Array.from(new Set(domains.map(normalizeHostname)));
     return unique;
   }
 
@@ -71,7 +71,7 @@ class ChatbotService {
 
   async update(userId: string, chatbotId: string, payload: Partial<ChatbotPayload>) {
     await this.getById(userId, chatbotId);
-    const allowedDomains = payload.allowedDomains ? this.sanitizeDomains(payload.allowedDomains) : undefined;
+    const allowedDomains = payload.allowedDomains !== undefined ? this.sanitizeDomains(payload.allowedDomains) : undefined;
     const theme = payload.theme ? themeSchema.parse(payload.theme) : undefined;
 
     const data: Prisma.ChatbotUncheckedUpdateInput = {};
