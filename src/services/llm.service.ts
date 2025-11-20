@@ -65,12 +65,13 @@ class LlmService {
     // Add current question
     inputMessages.push({ role: "user", content: question });
 
-    // Use new Responses API
+    // Use new Responses API with GPT-5.1 parameters
     const response = await this.client.responses.create({
       model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
       input: inputMessages,
-      reasoning: { effort: "medium" },
-      temperature: 0.3,
+      reasoning: { effort: "medium" }, // none, low, medium, high
+      text: { verbosity: "medium" }, // low, medium, high
+      max_output_tokens: 1000,
     });
 
     // Extract text from response output
