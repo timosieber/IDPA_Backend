@@ -13,9 +13,9 @@ export const DEFAULT_SCRAPER_INPUT = {
   rangeChunkSize: 65536,
   maxPdfBytesTotal: 16 * 1024 * 1024,
   allowFullDownload: false,
-  timeoutHtmlMs: 45000,
-  timeoutHeadMs: 15000,
-  timeoutPdfOpenMs: 45000,
+  timeoutHtmlMs: 120000,  // 2 Minuten für langsame Seiten
+  timeoutHeadMs: 30000,   // 30 Sekunden für HEAD requests
+  timeoutPdfOpenMs: 180000, // 3 Minuten für große PDFs
   doImageHead: true,
   doImageRangeMeta: false,
 };

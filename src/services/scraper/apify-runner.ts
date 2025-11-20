@@ -4,7 +4,8 @@ import { logger } from "../../lib/logger.js";
 import { buildScraperInputPayload } from "./input-utils.js";
 import type { DatasetItem, ScrapeOptions } from "./types.js";
 
-const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+// Timeout für Scraper-Runs: 30 Minuten (große Websites brauchen mehr Zeit)
+const RUN_TIMEOUT_MS = 30 * 60 * 1000;
 
 const trimTrailingSlashes = (url: string) => url.replace(/\/+$/, "");
 
