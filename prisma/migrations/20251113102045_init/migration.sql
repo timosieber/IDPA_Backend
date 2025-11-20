@@ -1,3 +1,15 @@
+-- CreateEnum
+CREATE TYPE "ChatbotStatus" AS ENUM ('DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED');
+
+-- CreateEnum
+CREATE TYPE "MessageRole" AS ENUM ('system', 'user', 'assistant');
+
+-- CreateEnum
+CREATE TYPE "KnowledgeSourceType" AS ENUM ('URL', 'TEXT', 'FILE');
+
+-- CreateEnum
+CREATE TYPE "KnowledgeSourceStatus" AS ENUM ('PENDING', 'READY', 'FAILED');
+
 -- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
@@ -16,7 +28,7 @@ CREATE TABLE "Chatbot" (
     "allowedDomains" JSONB NOT NULL DEFAULT '[]',
     "theme" JSONB,
     "model" TEXT NOT NULL DEFAULT 'gpt-4o-mini',
-    "status" TEXT NOT NULL DEFAULT 'DRAFT',
+    "status" "ChatbotStatus" NOT NULL DEFAULT 'DRAFT',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -40,7 +52,7 @@ CREATE TABLE "Session" (
 CREATE TABLE "Message" (
     "id" TEXT NOT NULL,
     "sessionId" TEXT NOT NULL,
-    "role" TEXT NOT NULL,
+    "role" "MessageRole" NOT NULL,
     "content" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -51,10 +63,10 @@ CREATE TABLE "Message" (
 CREATE TABLE "KnowledgeSource" (
     "id" TEXT NOT NULL,
     "chatbotId" TEXT NOT NULL,
-    "type" TEXT NOT NULL,
+    "type" "KnowledgeSourceType" NOT NULL,
     "label" TEXT NOT NULL,
     "uri" TEXT,
-    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "status" "KnowledgeSourceStatus" NOT NULL DEFAULT 'PENDING',
     "metadata" JSONB,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
