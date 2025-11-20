@@ -12,7 +12,9 @@ const trimTrailingSlashes = (url: string) => url.replace(/\/+$/, "");
 export class ApifyScraperRunner {
   private getConfig() {
     if (!env.SCRAPER_APIFY_ACTOR_ID || !env.SCRAPER_APIFY_API_TOKEN) {
-      throw new ServiceUnavailableError("Apify Scraper ist nicht konfiguriert");
+      throw new ServiceUnavailableError(
+        "Apify Scraper ist nicht konfiguriert. Bitte setze SCRAPER_APIFY_ACTOR_ID und SCRAPER_APIFY_API_TOKEN in den Umgebungsvariablen."
+      );
     }
     return {
       actorId: env.SCRAPER_APIFY_ACTOR_ID,
