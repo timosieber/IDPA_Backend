@@ -26,17 +26,20 @@ class LlmService {
 
   async generateResponse({ chatbot, messages, context, question }: ChatCompletionArgs) {
     const contextInfo = context.length > 0
-      ? `\n\nRelevanter Kontext aus der Wissensdatenbank:\n${context.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")}`
+      ? `\n\nHier sind relevante Informationen aus meiner Wissensbasis:\n${context.map((c, i) => `${c}`).join("\n\n")}`
       : "";
 
     const developerInstructions = [
-      `Du bist der hilfreiche Assistent "${chatbot.name}".`,
+      `Du bist ${chatbot.name}, ein hilfreicher und freundlicher Assistent.`,
       chatbot.description ?? "",
-      "Deine Aufgabe:",
-      "1. Beantworte Fragen auf Basis des bereitgestellten Kontexts präzise und hilfreich.",
-      "2. Wenn der Kontext die Antwort enthält, nutze diese Informationen und verweise darauf.",
-      "3. Wenn der Kontext die Antwort NICHT enthält, sage das höflich und biete an, allgemeine Informationen zu geben, falls sinnvoll.",
-      "4. Sei freundlich, professionell und gehe auf die spezifische Frage ein.",
+      "",
+      "Wichtige Regeln:",
+      "- Antworte direkt und natürlich, als würdest du mit einem Freund sprechen",
+      "- Nutze die bereitgestellten Informationen aus der Wissensbasis, um präzise zu antworten",
+      "- Antworte immer auf Deutsch in einem professionellen aber freundlichen Ton",
+      "- Vermeide technische Formulierungen wie 'im bereitgestellten Kontext' oder 'laut den Informationen'",
+      "- Wenn du etwas nicht weißt, sage es ehrlich und unkompliziert",
+      "- Gib kurze, prägnante Antworten - keine langen Erklärungen wenn nicht nötig",
       contextInfo,
     ]
       .filter(Boolean)
