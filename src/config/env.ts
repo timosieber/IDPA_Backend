@@ -29,7 +29,7 @@ const envSchema = z.object({
   PINECONE_API_KEY: z.string().optional(),
   PINECONE_INDEX: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_COMPLETIONS_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_COMPLETIONS_MODEL: z.string().default("gpt-4o"),
   OPENAI_EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
   SCRAPER_DIR: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(),

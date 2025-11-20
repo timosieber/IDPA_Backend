@@ -25,10 +25,19 @@ class LlmService {
   }
 
   async generateResponse({ chatbot, messages, context, question }: ChatCompletionArgs) {
+    const contextInfo = context.length > 0
+      ? `\n\nRelevanter Kontext aus der Wissensdatenbank:\n${context.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")}`
+      : "";
+
     const systemPrompt = [
-      `Du bist der persönliche Assistent "${chatbot.name}".`,
+      `Du bist der hilfreiche Assistent "${chatbot.name}".`,
       chatbot.description ?? "",
-      "Nutze ausschließlich die bereitgestellten Kontext-Informationen. Wenn Informationen fehlen, sage offen, dass du es nicht weißt.",
+      "Deine Aufgabe:",
+      "1. Beantworte Fragen auf Basis des bereitgestellten Kontexts präzise und hilfreich.",
+      "2. Wenn der Kontext die Antwort enthält, nutze diese Informationen und verweise darauf.",
+      "3. Wenn der Kontext die Antwort NICHT enthält, sage das höflich und biete an, allgemeine Informationen zu geben, falls sinnvoll.",
+      "4. Sei freundlich, professionell und gehe auf die spezifische Frage ein.",
+      contextInfo,
     ]
       .filter(Boolean)
       .join("\n");
@@ -43,11 +52,11 @@ class LlmService {
       model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
-        ...context.map((c) => ({ role: "system" as const, content: `Kontext: ${c}` })),
         ...messages,
         { role: "user", content: question },
       ],
-      temperature: 0.2,
+      temperature: 0.3,
+      max_tokens: 1000,
       stream: false,
     });
 
