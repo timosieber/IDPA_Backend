@@ -5,7 +5,7 @@
     "buildCommand": "npm run prisma:generate && npm run build"
   },
   "deploy": {
-    "startCommand": "npx prisma migrate deploy && npm start || (echo 'Backend crashed!' && cat package.json && ls -la dist/ && exit 1)",
+    "startCommand": "npx prisma migrate deploy && echo '=== Migrations complete, starting backend ===' && npm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
