@@ -8,4 +8,4 @@ cmds = ['npm install --legacy-peer-deps']
 cmds = ['npm run prisma:generate', 'npm run build']
 
 [start]
-cmd = 'npx prisma migrate deploy && echo "=== Migrations done ===" && echo "=== Running node dist/index.js ===" && node dist/index.js'
+cmd = 'bash start.sh'
