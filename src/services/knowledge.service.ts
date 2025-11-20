@@ -6,6 +6,8 @@ import { chatbotService } from "./chatbot.service.js";
 import { embeddingService } from "./embedding.service.js";
 import { getVectorStore } from "./vector-store/index.js";
 import { scraperRunner } from "./scraper/index.js";
+import { promptGeneratorService } from "./prompt-generator.service.js";
+import { logger } from "../lib/logger.js";
 import type { ScrapeOptions } from "./scraper/types.js";
 
 const vectorStore = getVectorStore();
@@ -121,7 +123,7 @@ class KnowledgeService {
     chatbotId: string,
     options: ScrapeOptions,
   ): Promise<{ sources: Array<{ id: string; label: string; chunks: number }>; pagesScanned: number }> {
-    await chatbotService.getById(userId, chatbotId);
+    const chatbot = await chatbotService.getById(userId, chatbotId);
 
     const pages = await scraperRunner.run(options);
     if (!pages.length) {
@@ -129,6 +131,28 @@ class KnowledgeService {
     }
 
     const ingested: Array<{ id: string; label: string; chunks: number }> = [];
+
+    // Generiere Custom System Prompt basierend auf gescrapten Daten
+    try {
+      const currentPrompt = (chatbot as any).systemPrompt;
+      if (!currentPrompt) {
+        logger.info(`Generiere System Prompt für Chatbot ${chatbotId}...`);
+        const generatedPrompt = await promptGeneratorService.generateSystemPrompt(pages as any);
+
+        // Update Chatbot mit generiertem Prompt
+        await prisma.chatbot.update({
+          where: { id: chatbotId },
+          data: { systemPrompt: generatedPrompt } as any,
+        });
+
+        logger.info(`System Prompt erfolgreich generiert und gespeichert für Chatbot ${chatbotId}`);
+      } else {
+        logger.info(`Chatbot ${chatbotId} hat bereits einen Custom System Prompt - überspringe Generierung`);
+      }
+    } catch (error) {
+      logger.error({ err: error }, `Fehler bei System Prompt Generierung für Chatbot ${chatbotId}`);
+      // Nicht fatal - Scraping läuft weiter
+    }
 
     for (const page of pages) {
       const pageText = page.main_text?.replace(/\s+/g, " ").trim() ?? "";
