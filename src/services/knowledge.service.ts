@@ -131,7 +131,8 @@ export class KnowledgeService {
 
     for (const page of pages) {
       const title = page.title || page.canonical_url || page.page_url;
-      const markdown = `# ${title}\n\n${page.main_text || ""}`;
+      const pageText = page.main_text || (page as any).text || (page as any).content || JSON.stringify(page, null, 2);
+      const markdown = `# ${title}\n\n${pageText}`;
       if (!markdown.trim()) continue;
 
       const source = await this.upsertKnowledgeSource({

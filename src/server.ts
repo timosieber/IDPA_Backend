@@ -47,21 +47,20 @@ export const buildServer = (): Express => {
 
   app.use("/api", apiRateLimiter);
 
-  const makeBot = (bot?: any) => ({
-    id: bot?.id ?? "default-bot",
-    userId: bot?.userId ?? "system",
-    name: bot?.name ?? "RAG Assistant",
-    description: bot?.description ?? "Default RAG Assistant",
-    systemPrompt: bot?.systemPrompt ?? null,
-    logoUrl: bot?.logoUrl ?? null,
-    allowedDomains: bot?.allowedDomains ?? [],
-    theme: bot?.theme ?? null,
-    model: bot?.model ?? "gpt-4o",
-    status: (bot?.status as any) ?? "ACTIVE",
-    createdAt: bot?.createdAt ?? new Date().toISOString(),
-    updatedAt: bot?.updatedAt ?? new Date().toISOString(),
+  const makeBot = (bot: any) => ({
+    id: bot.id,
+    userId: bot.userId,
+    name: bot.name,
+    description: bot.description ?? null,
+    systemPrompt: bot.systemPrompt ?? null,
+    logoUrl: bot.logoUrl ?? null,
+    allowedDomains: bot.allowedDomains ?? [],
+    theme: bot.theme ?? null,
+    model: bot.model ?? "gpt-4o",
+    status: bot.status ?? "ACTIVE",
+    createdAt: bot.createdAt ?? new Date().toISOString(),
+    updatedAt: bot.updatedAt ?? new Date().toISOString(),
   });
-  const defaultBot = makeBot();
   const ensureSystemUser = async () => {
     const email = "system@local";
     const existing = await prisma.user.findFirst({ where: { email } });
@@ -73,11 +72,10 @@ export const buildServer = (): Express => {
   app.get("/api/chatbots", async (_req, res) => {
     try {
       const bots = await prisma.chatbot.findMany({ orderBy: { createdAt: "desc" } });
-      if (!bots.length) return res.json([makeBot()]);
       return res.json(bots.map(makeBot));
     } catch (err) {
       console.error("GET /api/chatbots error:", err);
-      return res.json([makeBot()]);
+      return res.json([]);
     }
   });
 
@@ -98,24 +96,23 @@ export const buildServer = (): Express => {
       res.status(201).json(makeBot(bot));
     } catch (err) {
       console.error("POST /api/chatbots error:", err);
-      res.status(201).json(makeBot());
+      res.status(400).json({ error: "Chatbot konnte nicht erstellt werden" });
     }
   });
 
   app.get("/api/chatbots/:id", async (req, res) => {
     try {
       const bot = await prisma.chatbot.findUnique({ where: { id: req.params.id } });
-      if (!bot) return res.json(makeBot({ id: req.params.id }));
+      if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
       return res.json(makeBot(bot));
     } catch (err) {
       console.error("GET /api/chatbots/:id error:", err);
-      return res.json(makeBot({ id: req.params.id }));
+      return res.status(404).json({ error: "Chatbot nicht gefunden" });
     }
   });
 
   app.patch("/api/chatbots/:id", (req, res) => {
-    const name = req.body?.name || defaultBot.name;
-    res.json(makeBot({ id: req.params.id || defaultBot.id, name }));
+    res.status(501).json({ error: "Not implemented" });
   });
 
   app.delete("/api/chatbots/:id", async (req, res) => {
@@ -219,7 +216,7 @@ export const buildServer = (): Express => {
 
   // Minimal chat session/messages endpoints for widget compatibility
   app.post("/api/chat/sessions", async (req, res) => {
-    const chatbotId = req.body?.chatbotId || "default-bot";
+    const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string) || "default-bot";
     const sessionId = randomUUID();
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -228,7 +225,7 @@ export const buildServer = (): Express => {
 
   app.post("/api/chat/messages", async (req, res, next) => {
     try {
-      const chatbotId = req.body?.chatbotId || "default-bot";
+      const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string) || "default-bot";
       const message = req.body?.message || req.body?.question || req.body?.prompt;
       if (!message) return res.status(400).json({ error: "message is required" });
 
