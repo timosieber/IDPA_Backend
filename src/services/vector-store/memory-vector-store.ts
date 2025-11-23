@@ -49,6 +49,14 @@ export class MemoryVectorStore implements VectorStore {
     }
   }
 
+  async deleteByChatbot({ chatbotId }: { chatbotId: string }) {
+    for (const [id, vector] of this.store.entries()) {
+      if (vector.metadata.chatbotId === chatbotId) {
+        this.store.delete(id);
+      }
+    }
+  }
+
   private cosineSimilarity(a: number[], b: number[]) {
     const minLength = Math.min(a.length, b.length);
     let dot = 0;

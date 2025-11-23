@@ -67,4 +67,23 @@ export class PineconeVectorStore implements VectorStore {
       logger.error({ err: error }, "Pinecone delete failed");
     }
   }
+
+  async deleteByChatbot({ chatbotId }: { chatbotId: string }) {
+    const ns = chatbotId || "global";
+    try {
+      // Prefer deleteAll if available
+      const nspace: any = (this.index as any).namespace(ns);
+      if (typeof nspace.deleteAll === "function") {
+        await nspace.deleteAll();
+        return;
+      }
+      if (typeof nspace.deleteMany === "function") {
+        await nspace.deleteMany({});
+        return;
+      }
+      logger.warn({ ns }, "Pinecone namespace delete not supported in this client version");
+    } catch (error) {
+      logger.error({ err: error, ns }, "Pinecone deleteByChatbot failed");
+    }
+  }
 }

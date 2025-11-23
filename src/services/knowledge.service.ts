@@ -237,6 +237,15 @@ export class KnowledgeService {
     }
     return vector;
   }
+
+  async purgeChatbotVectors(chatbotId: string) {
+    try {
+      await this.vectorStore.deleteByChatbot({ chatbotId });
+    } catch (err) {
+      // swallow, log if needed
+      console.error("purgeChatbotVectors error", err);
+    }
+  }
 }
 
 export const knowledgeService = new KnowledgeService();

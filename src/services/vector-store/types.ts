@@ -23,4 +23,7 @@ export interface VectorStore {
   similaritySearch(args: { chatbotId: string; vector: number[]; topK: number }): Promise<VectorMatch[]>;
 
   deleteByKnowledgeSource(args: { chatbotId: string; knowledgeSourceId: string }): Promise<void>;
+
+    // Delete all vectors for a chatbot/namespace
+  deleteByChatbot(args: { chatbotId: string }): Promise<void>;
 }

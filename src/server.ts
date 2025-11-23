@@ -9,6 +9,7 @@ import { knowledgeService } from "./services/knowledge.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { prisma } from "./lib/prisma.js";
+import { randomUUID } from "node:crypto";
 
 const LOCALHOST_PORTS = ["3000", "4200", "5173", "8080"];
 const DEFAULT_CHATBOT_ID = "default-bot";
@@ -117,8 +118,17 @@ export const buildServer = (): Express => {
     res.json(makeBot({ id: req.params.id || defaultBot.id, name }));
   });
 
-  app.delete("/api/chatbots/:id", (_req, res) => {
-    res.status(204).send();
+  app.delete("/api/chatbots/:id", async (req, res) => {
+    const chatbotId = req.params.id;
+    try {
+      await knowledgeService.purgeChatbotVectors(chatbotId);
+      await prisma.chatbot.delete({ where: { id: chatbotId } });
+      res.status(204).send();
+    } catch (err) {
+      console.error("DELETE /api/chatbots/:id error:", err);
+      // still return 204 to keep frontend flowing
+      res.status(204).send();
+    }
   });
 
   app.post("/api/chat", async (req: Request, res: Response, next: NextFunction) => {
@@ -202,6 +212,32 @@ export const buildServer = (): Express => {
     try {
       await knowledgeService.deleteSource(req.params.id);
       res.status(204).send();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Minimal chat session/messages endpoints for widget compatibility
+  app.post("/api/chat/sessions", async (req, res) => {
+    const chatbotId = req.body?.chatbotId || "default-bot";
+    const sessionId = randomUUID();
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    res.status(201).json({ sessionId, token, expiresAt, chatbotId });
+  });
+
+  app.post("/api/chat/messages", async (req, res, next) => {
+    try {
+      const chatbotId = req.body?.chatbotId || "default-bot";
+      const message = req.body?.message || req.body?.question || req.body?.prompt;
+      if (!message) return res.status(400).json({ error: "message is required" });
+
+      const result = await chatService.generateResponse({
+        chatbotId,
+        message,
+        history: Array.isArray(req.body?.history) ? req.body.history : [],
+      });
+      res.json({ sessionId: req.body?.sessionId ?? null, answer: result.answer, context: result.context, sources: result.sources });
     } catch (err) {
       next(err);
     }
