@@ -31,7 +31,7 @@ export class MemoryVectorStore implements VectorStore {
     const matches: VectorMatch[] = [];
 
     for (const item of this.store.values()) {
-      if (item.metadata.chatbotId !== chatbotId) continue;
+      if (item.metadata.chatbotId && item.metadata.chatbotId !== chatbotId) continue;
       const score = this.cosineSimilarity(vector, item.vector);
       matches.push({ id: item.id, score, metadata: item.metadata, content: item.content });
     }

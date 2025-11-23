@@ -1,12 +1,46 @@
-import type { Chatbot, Session, Message } from "@prisma/client";
-import { BadRequestError } from "../utils/errors.js";
-import { knowledgeService } from "./knowledge.service.js";
-import { llmService } from "./llm.service.js";
+import crypto from "node:crypto";
+import type { Chatbot, Message, Session } from "@prisma/client";
+import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
+import { env } from "../config/env.js";
+import { getVectorStore } from "./vector-store/index.js";
 import { messageService } from "./message.service.js";
+import { BadRequestError } from "../utils/errors.js";
+
+// Debug hook to trace module load issues in ESM/ts-node
+console.log("[chat.service] module init");
 
 type SessionWithChatbot = Session & { chatbot: Chatbot };
 
-class ChatService {
+interface RankedContext {
+  id: string;
+  content: string;
+  metadata: Record<string, any>;
+  score: number;
+}
+
+const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
+  const docsText = docs
+    .map((d, idx) => `ID: ${idx + 1}\nText: ${d.content.slice(0, 1200)}\nMeta: ${JSON.stringify(d.metadata)}`)
+    .join("\n\n");
+  return `Du bist ein Re-Ranker. Sortiere die folgenden Passagen nach Relevanz zur Anfrage und gib NUR die IDs als kommaseparierte Liste, ohne weitere Worte.\n\nAnfrage: ${query}\n\nPassagen:\n${docsText}\n\nAntwortformat: "3,1,2"`;
+};
+
+const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE === "1";
+
+export class ChatService {
+  private readonly vectorStore = getVectorStore();
+  private readonly embeddings = new OpenAIEmbeddings({
+    model: env.OPENAI_EMBEDDINGS_MODEL,
+  });
+  private readonly chatModel = new ChatOpenAI({
+    model: env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
+    temperature: 0.2,
+  });
+  private readonly rerankModel = new ChatOpenAI({
+    model: env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
+    temperature: 0,
+  });
+
   async handleMessage(session: SessionWithChatbot, content: string) {
     if (!content?.trim()) {
       throw new BadRequestError("Message darf nicht leer sein");
@@ -15,33 +49,199 @@ class ChatService {
     const history = await messageService.getRecentMessages(session.id);
     await messageService.logMessage(session.id, "user", content);
 
-    // Initial context retrieval (wird nur genutzt wenn kein Tool Calling aktiv ist)
-    const initialContext = await knowledgeService.retrieveContext(session.chatbotId, content);
-
-    // Callback für Tool Calling - ermöglicht dem LLM, selbst nach Informationen zu suchen
-    const onToolCall = async (query: string): Promise<string[]> => {
-      return await knowledgeService.retrieveContext(session.chatbotId, query);
-    };
-
-    const response = await llmService.generateResponse({
-      chatbot: {
-        name: session.chatbot.name,
-        description: session.chatbot.description,
-        model: session.chatbot.model,
-        systemPrompt: (session.chatbot as any).systemPrompt || null,
-      },
-      messages: history.map((message: Message) => ({
-        role: message.role === "assistant" ? "assistant" : "user",
-        content: message.content,
-      })),
-      context: initialContext,
-      question: content,
-      onToolCall, // Aktiviert Function Calling
+    // Stage 1: Vector search
+    const queryVector = await this.embedSafe(content);
+    const vectorMatches = await this.vectorStore.similaritySearch({
+      chatbotId: session.chatbotId,
+      vector: queryVector,
+      topK: 20,
     });
 
-    await messageService.logMessage(session.id, "assistant", response);
+    // Stage 2: Re-rank (LLM-based fallback)
+    const reranked = await this.rerank(content, vectorMatches);
+    const topContexts = reranked.slice(0, 5);
 
-    return { answer: response, context: initialContext };
+    const contextString = this.buildContextString(topContexts);
+    const citations = this.buildCitations(topContexts);
+
+    const systemPrompt = [
+      `Du bist ein Assistent für ${session.chatbot.name || "unser Projekt"}.`,
+      "Antworte NUR basierend auf dem folgenden Kontext.",
+      "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
+      "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
+    ].join(" ");
+
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      ...history.map((m: Message) => ({
+        role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+        content: m.content,
+      })),
+      {
+        role: "user" as const,
+        content: `Frage: ${content}\n\nKontext:\n${contextString}`,
+      },
+    ];
+
+    let answer: string;
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
+      const snippet = topContexts[0]?.content?.slice(0, 200) ?? "Keine Daten";
+      answer = `Mock-Antwort (offline). Relevanter Kontext: ${snippet}`;
+    } else {
+      const completion = await this.chatModel.invoke(messages);
+      answer = typeof completion.content === "string"
+        ? completion.content
+        : Array.isArray(completion.content)
+          ? completion.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
+          : "";
+    }
+
+    if (!answer.includes("[") && citations) {
+      answer = `${answer}\n\nQuellen: ${citations}`;
+    } else if (citations && !answer.includes(citations)) {
+      answer = `${answer}\n\nQuellen: ${citations}`;
+    }
+
+    await messageService.logMessage(session.id, "assistant", answer);
+
+    return {
+      answer,
+      context: topContexts.map((c) => c.content),
+      sources: topContexts.map((c) => ({ content: c.content, metadata: c.metadata, score: c.score })),
+    };
+  }
+
+  /**
+   * Lightweight helper for tests or ad-hoc calls without Session/DB.
+   */
+  async generateResponse({
+    chatbotId,
+    message,
+    history = [],
+  }: {
+    chatbotId: string;
+    message: string;
+    history?: Array<{ role: "user" | "assistant"; content: string }>;
+  }) {
+    const queryVector = await this.embedSafe(message);
+    const vectorMatches = await this.vectorStore.similaritySearch({
+      chatbotId,
+      vector: queryVector,
+      topK: 20,
+    });
+    const reranked = await this.rerank(message, vectorMatches);
+    const topContexts = reranked.slice(0, 5);
+
+    const contextString = this.buildContextString(topContexts);
+    const citations = this.buildCitations(topContexts);
+
+    const systemPrompt = [
+      "Du bist ein Assistent für unser Projekt.",
+      "Antworte NUR basierend auf dem folgenden Kontext.",
+      "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
+      "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
+    ].join(" ");
+
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      ...history.map((m) => ({ role: m.role, content: m.content })),
+      { role: "user" as const, content: `Frage: ${message}\n\nKontext:\n${contextString}` },
+    ];
+
+    let answer: string;
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
+      const snippet = topContexts[0]?.content?.slice(0, 200) ?? "Keine Daten";
+      answer = `Mock-Antwort (offline). Relevanter Kontext: ${snippet}`;
+    } else {
+      const completion = await this.chatModel.invoke(messages);
+      answer = typeof completion.content === "string"
+        ? completion.content
+        : Array.isArray(completion.content)
+          ? completion.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
+          : "";
+    }
+
+    if (!answer.includes("[") && citations) {
+      answer = `${answer}\n\nQuellen: ${citations}`;
+    } else if (citations && !answer.includes(citations)) {
+      answer = `${answer}\n\nQuellen: ${citations}`;
+    }
+
+    return {
+      answer,
+      context: topContexts.map((c) => c.content),
+      sources: topContexts.map((c) => ({ content: c.content, metadata: c.metadata, score: c.score })),
+    };
+  }
+
+  private async rerank(query: string, docs: Array<{ id: string; content: string; metadata: Record<string, any>; score: number }>): Promise<RankedContext[]> {
+    if (!docs.length) return [];
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
+      return docs.slice(0, 5);
+    }
+    try {
+      const prompt = RERANK_PROMPT(query, docs.map((d) => ({ ...d })));
+      const res = await this.rerankModel.invoke([{ role: "user", content: prompt }]);
+      const text = typeof res.content === "string"
+        ? res.content
+        : Array.isArray(res.content)
+          ? res.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
+          : "";
+      const ids = text
+        .split(/[, ]+/)
+        .map((v) => parseInt(v, 10))
+        .filter((n) => Number.isInteger(n) && n >= 1 && n <= docs.length);
+
+      if (!ids.length) return docs.slice(0, 5);
+
+      const ordered = ids
+        .map((idx) => docs[idx - 1])
+        .filter(Boolean)
+        .map((d, i) => ({ ...d, score: docs.length - i }));
+
+      return ordered;
+    } catch {
+      return docs;
+    }
+  }
+
+  private buildContextString(contexts: RankedContext[]): string {
+    return contexts
+      .map((ctx, i) => {
+        const meta = ctx.metadata || {};
+        const title = meta.title || meta.label || meta.filename || meta.sourceUrl || `Quelle ${i + 1}`;
+        const url = meta.sourceUrl || meta.filename || "N/A";
+        const date = meta.datePublished ? ` (Datum: ${meta.datePublished})` : "";
+        return `### ${title}${date}\nURL: ${url}\n${ctx.content}`;
+      })
+      .join("\n\n");
+  }
+
+  private buildCitations(contexts: RankedContext[]): string {
+    if (!contexts.length) return "";
+    const parts = contexts.map((ctx, i) => {
+      const meta = ctx.metadata || {};
+      const title = meta.title || meta.label || meta.filename || `Quelle ${i + 1}`;
+      const url = meta.sourceUrl || meta.filename || "N/A";
+      return `[${title}](${url})`;
+    });
+    return Array.from(new Set(parts)).join(" ");
+  }
+
+  private async embedSafe(text: string): Promise<number[]> {
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
+      return this.mockEmbedding(text);
+    }
+    try {
+      return await this.embeddings.embedQuery(text);
+    } catch {
+      return this.mockEmbedding(text);
+    }
+  }
+
+  private mockEmbedding(text: string): number[] {
+    const hash = crypto.createHash("sha256").update(text).digest();
+    return Array.from(hash).map((byte) => (byte / 255) * 2 - 1);
   }
 }
 

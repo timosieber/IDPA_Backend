@@ -1,300 +1,160 @@
-import type { Prisma } from "@prisma/client";
-import { prisma } from "../lib/prisma.js";
-import { BadRequestError, NotFoundError } from "../utils/errors.js";
-import { chunkText } from "../utils/chunk-text.js";
-import { chatbotService } from "./chatbot.service.js";
-import { embeddingService } from "./embedding.service.js";
+import crypto from "node:crypto";
+import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
+import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
+import { env } from "../config/env.js";
 import { getVectorStore } from "./vector-store/index.js";
-import { scraperRunner } from "./scraper/index.js";
-import { promptGeneratorService } from "./prompt-generator.service.js";
-import { logger } from "../lib/logger.js";
-import type { ScrapeOptions } from "./scraper/types.js";
 
-const vectorStore = getVectorStore();
-const MIN_TEXT_LENGTH = 200;
+export interface IngestionInput {
+  content: string; // Markdown
+  metadata: {
+    chatbotId?: string;
+    knowledgeSourceId?: string;
+    sourceUrl?: string;
+    filename?: string;
+    title: string;
+    datePublished?: string;
+    type: "web" | "pdf";
+  };
+}
 
-class KnowledgeService {
-  private async embedChunksForSource({
-    chatbotId,
-    sourceId,
-    label,
-    chunks,
-  }: {
-    chatbotId: string;
-    sourceId: string;
-    label: string;
-    chunks: string[];
-  }) {
-    let chunkIndex = 0;
-    for (const chunk of chunks) {
-      const embedding = await embeddingService.embedText(chunk);
-      const vectorId = await vectorStore.upsertEmbedding({
-        vector: embedding,
-        metadata: {
-          chatbotId,
-          knowledgeSourceId: sourceId,
-          chunkIndex,
-          label,
-        },
-        content: chunk,
-      });
+interface EnrichedChunk {
+  combined: string;
+  original: string;
+  summary: string;
+  index: number;
+}
 
-      await prisma.embedding.create({
-        data: {
-          knowledgeSourceId: sourceId,
-          vectorId,
-          content: chunk,
-          tokenCount: chunk.length,
-        },
-      });
-      chunkIndex += 1;
+const SUMMARY_PROMPT = (title: string, chunk: string) =>
+  `Du bist ein AI-Assistent. Hier ist ein Ausschnitt aus dem Dokument "${title}". Bitte fasse den Inhalt in einem einzigen, prägnanten Satz zusammen, der den Kontext für eine Suchmaschine klärt.\n\nAusschnitt:\n${chunk}`;
+
+const DEFAULT_SUMMARIZER_MODEL = "gpt-4o-mini";
+const MAX_CONCURRENCY = 10;
+const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE === "1";
+
+export class KnowledgeService {
+  private readonly vectorStore = getVectorStore();
+  private readonly embeddings = new OpenAIEmbeddings({
+    model: env.OPENAI_EMBEDDINGS_MODEL,
+  });
+  private readonly summarizer = new ChatOpenAI({
+    model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_SUMMARIZER_MODEL,
+    temperature: 0.1,
+  });
+
+  async processIngestion(input: IngestionInput) {
+    if (!input.content?.trim()) {
+      throw new Error("IngestionInput.content darf nicht leer sein");
     }
-  }
+    if (!input.metadata?.title) {
+      throw new Error("IngestionInput.metadata.title ist erforderlich");
+    }
 
-  private async resetSourceEmbeddings(chatbotId: string, sourceId: string) {
-    await vectorStore.deleteByKnowledgeSource({ chatbotId, knowledgeSourceId: sourceId });
-    await prisma.embedding.deleteMany({ where: { knowledgeSourceId: sourceId } });
-  }
-
-  async listSources(userId: string, chatbotId: string) {
-    await chatbotService.getById(userId, chatbotId);
-    return prisma.knowledgeSource.findMany({
-      where: { chatbotId },
-      include: { embeddings: true },
-      orderBy: { createdAt: "desc" },
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1200,
+      chunkOverlap: 200,
+      separators: ["\n# ", "\n## ", "\n### ", "\n#### ", "\n\n", "\n", " "],
     });
-  }
 
-  async addTextSource(userId: string, chatbotId: string, label: string, content: string) {
-    if (!content.trim()) {
-      throw new BadRequestError("Content darf nicht leer sein");
-    }
-
-    await chatbotService.getById(userId, chatbotId);
-    const data: Prisma.KnowledgeSourceUncheckedCreateInput = {
-      chatbotId,
-      label,
-      type: "TEXT",
-      uri: null,
-    };
-
-    const source = await prisma.knowledgeSource.create({ data });
-
-    try {
-      const chunks = chunkText(content);
-      if (!chunks.length) {
-        throw new BadRequestError("Zu wenig Text für Embeddings gefunden");
-      }
-
-      await this.embedChunksForSource({ chatbotId, sourceId: source.id, label, chunks });
-
-      await prisma.knowledgeSource.update({
-        where: { id: source.id },
-        data: { status: "READY" },
-      });
-      return source;
-    } catch (error) {
-      await prisma.knowledgeSource.update({
-        where: { id: source.id },
-        data: { status: "FAILED" },
-      });
-      throw error;
-    }
-  }
-
-  async deleteSource(userId: string, knowledgeSourceId: string) {
-    const source = await prisma.knowledgeSource.findUnique({ where: { id: knowledgeSourceId } });
-    if (!source) {
-      throw new NotFoundError("Quelle nicht gefunden");
-    }
-    await chatbotService.getById(userId, source.chatbotId);
-    await this.resetSourceEmbeddings(source.chatbotId, source.id);
-    await prisma.knowledgeSource.delete({ where: { id: source.id } });
-  }
-
-  async retrieveContext(chatbotId: string, question: string) {
-    const embedding = await embeddingService.embedText(question);
-    const matches = await vectorStore.similaritySearch({ chatbotId, vector: embedding, topK: 4 });
-    return matches.map((match) => match.content);
-  }
-
-  async scrapeAndIngest(
-    userId: string,
-    chatbotId: string,
-    options: ScrapeOptions,
-  ): Promise<{ sources: Array<{ id: string; label: string; chunks: number }>; pagesScanned: number }> {
-    const chatbot = await chatbotService.getById(userId, chatbotId);
-
-    const pages = await scraperRunner.run(options);
-    if (!pages.length) {
-      throw new BadRequestError("Keine Seiten konnten extrahiert werden");
-    }
-
-    const ingested: Array<{ id: string; label: string; chunks: number }> = [];
-
-    // Generiere Custom System Prompt basierend auf gescrapten Daten
-    try {
-      const currentPrompt = (chatbot as any).systemPrompt;
-      if (!currentPrompt) {
-        logger.info(`Generiere System Prompt für Chatbot ${chatbotId}...`);
-        const generatedPrompt = await promptGeneratorService.generateSystemPrompt(pages as any);
-
-        // Update Chatbot mit generiertem Prompt
-        await prisma.chatbot.update({
-          where: { id: chatbotId },
-          data: { systemPrompt: generatedPrompt } as any,
-        });
-
-        logger.info(`System Prompt erfolgreich generiert und gespeichert für Chatbot ${chatbotId}`);
-      } else {
-        logger.info(`Chatbot ${chatbotId} hat bereits einen Custom System Prompt - überspringe Generierung`);
-      }
-    } catch (error) {
-      logger.error({ err: error }, `Fehler bei System Prompt Generierung für Chatbot ${chatbotId}`);
-      // Nicht fatal - Scraping läuft weiter
-    }
-
-    for (const page of pages) {
-      const pageText = page.main_text?.replace(/\s+/g, " ").trim() ?? "";
-      const pageLabel = page.title?.trim() || page.canonical_url;
-      const pageMetadata: Prisma.InputJsonValue = {
-        headings: {
-          h1: [...(page.headings?.h1 ?? [])],
-          h2: [...(page.headings?.h2 ?? [])],
-          h3: [...(page.headings?.h3 ?? [])],
-        } as Prisma.InputJsonValue,
-        lang: (page.lang ?? {}) as Prisma.InputJsonValue,
-        meta: (page.meta ?? {}) as Prisma.InputJsonValue,
-        links: (page.links ?? []).map((link) => ({
-          href: link.href,
-          canonical_href: link.canonical_href,
-          anchor_text: link.anchor_text,
-          context_snippet: link.context_snippet,
-        })) as Prisma.InputJsonValue,
-        fetchedAt: page.fetched_at,
-      };
-
-      if (pageText.length >= MIN_TEXT_LENGTH) {
-        const source = await this.upsertScrapedSource({
-          chatbotId,
-          label: pageLabel,
-          uri: page.canonical_url,
-          type: "URL",
-          metadata: pageMetadata,
-        });
-
-        const chunks = chunkText(pageText);
-        await this.persistChunksForSource({ chatbotId, sourceId: source.id, label: pageLabel, chunks, ingested });
-      }
-
-      for (const pdf of page.pdfs ?? []) {
-        const pdfRawText =
-          pdf.perplexity_content ?? pdf.pages.map((pdfPage) => pdfPage.text).join("\n\n");
-        const pdfText = pdfRawText?.replace(/\s+/g, " ").trim() ?? "";
-        if (pdfText.length < MIN_TEXT_LENGTH) continue;
-
-        const pdfLabel = pdf.title?.trim() || pdf.pdf_url;
-        const pdfMetadata: Prisma.InputJsonValue = {
-          sourcePage: page.page_url,
-          httpHead: pdf.http_head,
-          rangeSupported: pdf.range_supported,
-          bytesLoaded: pdf.bytes_loaded,
-          extractionMethod: pdf.extraction_method,
-          overall: pdf.overall,
-        };
-
-        const pdfSource = await this.upsertScrapedSource({
-          chatbotId,
-          label: pdfLabel,
-          uri: pdf.pdf_url,
-          type: "FILE",
-          metadata: pdfMetadata,
-        });
-
-        const pdfChunks = chunkText(pdfText);
-        await this.persistChunksForSource({ chatbotId, sourceId: pdfSource.id, label: pdfLabel, chunks: pdfChunks, ingested });
-      }
-    }
-
-    if (!ingested.length) {
-      throw new BadRequestError("Keine verwertbaren Inhalte nach dem Scrapen gefunden");
-    }
-
-    return { sources: ingested, pagesScanned: pages.length };
-  }
-
-  private async persistChunksForSource({
-    chatbotId,
-    sourceId,
-    label,
-    chunks,
-    ingested,
-  }: {
-    chatbotId: string;
-    sourceId: string;
-    label: string;
-    chunks: string[];
-    ingested: Array<{ id: string; label: string; chunks: number }>;
-  }) {
+    const chunks = await splitter.splitText(input.content);
     if (!chunks.length) {
-      throw new BadRequestError("Zu wenig Text für Embeddings gefunden");
+      throw new Error("Keine Chunks generiert – Eingabe zu kurz?");
+    }
+
+    const enriched = await this.summarizeChunks(chunks, input.metadata.title);
+    await this.embedAndStore(enriched, input.metadata);
+
+    return { chunks: enriched.length };
+  }
+
+  private async summarizeChunks(chunks: string[], title: string): Promise<EnrichedChunk[]> {
+    const results: EnrichedChunk[] = new Array(chunks.length);
+    let cursor = 0;
+
+    const workers = Array(Math.min(MAX_CONCURRENCY, chunks.length))
+      .fill(null)
+      .map(async () => {
+        while (true) {
+          const index = cursor;
+          cursor += 1;
+          if (index >= chunks.length) break;
+          const chunk = chunks[index]!;
+          const summary = await this.generateSummary(title, chunk);
+          const combined = `[Kontext: ${summary}]\n\n${chunk}`;
+          results[index] = { combined, original: chunk, summary, index };
+        }
+      });
+
+    await Promise.all(workers);
+    return results;
+  }
+
+  private async generateSummary(title: string, chunk: string): Promise<string> {
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
+      return (chunk.slice(0, 180) || "Kontext").replace(/\s+/g, " ").trim();
     }
     try {
-      await this.embedChunksForSource({ chatbotId, sourceId, label, chunks });
-      await prisma.knowledgeSource.update({
-        where: { id: sourceId },
-        data: { status: "READY" },
-      });
-      ingested.push({ id: sourceId, label, chunks: chunks.length });
+      const res = await this.summarizer.invoke([
+        { role: "user", content: SUMMARY_PROMPT(title, chunk) },
+      ]);
+      const text = typeof res.content === "string"
+        ? res.content
+        : Array.isArray(res.content)
+          ? res.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
+          : "";
+      return (text || "").trim() || "Zusammenfassung nicht verfügbar";
     } catch (error) {
-      await prisma.knowledgeSource.update({
-        where: { id: sourceId },
-        data: { status: "FAILED" },
-      });
-      throw error;
+      return "Zusammenfassung nicht verfügbar";
     }
   }
 
-  private async upsertScrapedSource({
-    chatbotId,
-    label,
-    uri,
-    type,
-    metadata,
-  }: {
-    chatbotId: string;
-    label: string;
-    uri: string;
-    type: Prisma.KnowledgeSourceUncheckedCreateInput["type"];
-    metadata: Prisma.InputJsonValue;
-  }) {
-    let source = await prisma.knowledgeSource.findFirst({
-      where: { chatbotId, uri },
-    });
+  private async embedAndStore(chunks: EnrichedChunk[], metadata: IngestionInput["metadata"]) {
+    let cursor = 0;
+    const workers = Array(Math.min(MAX_CONCURRENCY, chunks.length))
+      .fill(null)
+      .map(async () => {
+        while (true) {
+          const idx = cursor;
+          cursor += 1;
+          if (idx >= chunks.length) break;
+          const chunk = chunks[idx]!;
+          const vector = await this.embedSafe(chunk.combined);
+          const enrichedMetadata = {
+            chatbotId: metadata.chatbotId ?? "global",
+            knowledgeSourceId: metadata.knowledgeSourceId ?? metadata.sourceUrl ?? metadata.filename ?? "unknown",
+            title: metadata.title,
+            sourceUrl: metadata.sourceUrl,
+            filename: metadata.filename,
+            datePublished: metadata.datePublished,
+            type: metadata.type,
+            chunkIndex: chunk.index,
+            original_content: chunk.original,
+          };
 
-    if (source) {
-      await this.resetSourceEmbeddings(chatbotId, source.id);
-      source = await prisma.knowledgeSource.update({
-        where: { id: source.id },
-        data: {
-          label,
-          status: "PENDING",
-          metadata,
-        },
+          await this.vectorStore.upsertEmbedding({
+            vector,
+            metadata: enrichedMetadata,
+            content: chunk.combined,
+          });
+        }
       });
-      return source;
-    }
 
-    return prisma.knowledgeSource.create({
-      data: {
-        chatbotId,
-        label,
-        type,
-        uri,
-        metadata,
-        status: "PENDING",
-      },
-    });
+    await Promise.all(workers);
+  }
+
+  private async embedSafe(text: string): Promise<number[]> {
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
+      return this.mockEmbedding(text);
+    }
+    try {
+      return await this.embeddings.embedQuery(text);
+    } catch {
+      return this.mockEmbedding(text);
+    }
+  }
+
+  private mockEmbedding(text: string): number[] {
+    const hash = crypto.createHash("sha256").update(text).digest();
+    return Array.from(hash).map((byte) => (byte / 255) * 2 - 1);
   }
 }
 

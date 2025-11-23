@@ -27,7 +27,8 @@ export class PineconeVectorStore implements VectorStore {
     content: string;
   }) {
     const id = vectorId ?? crypto.randomUUID();
-    await this.index.namespace(metadata.chatbotId).upsert([
+    const ns = metadata.chatbotId ?? "global";
+    await this.index.namespace(ns).upsert([
       {
         id,
         values: vector,
@@ -41,7 +42,8 @@ export class PineconeVectorStore implements VectorStore {
   }
 
   async similaritySearch({ chatbotId, vector, topK }: { chatbotId: string; vector: number[]; topK: number }) {
-    const response = await this.index.namespace(chatbotId).query({
+    const ns = chatbotId || "global";
+    const response = await this.index.namespace(ns).query({
       vector,
       topK,
       includeMetadata: true,
@@ -51,12 +53,7 @@ export class PineconeVectorStore implements VectorStore {
       response.matches?.map((match) => ({
         id: match.id,
         score: match.score ?? 0,
-        metadata: {
-          chatbotId,
-          knowledgeSourceId: String(match.metadata?.knowledgeSourceId ?? ""),
-          chunkIndex: Number(match.metadata?.chunkIndex ?? 0),
-          label: String(match.metadata?.label ?? ""),
-        },
+        metadata: (match.metadata as Record<string, any>) ?? { chatbotId: ns },
         content: String(match.metadata?.content ?? ""),
       })) ?? []
     );
@@ -64,7 +61,8 @@ export class PineconeVectorStore implements VectorStore {
 
   async deleteByKnowledgeSource({ chatbotId, knowledgeSourceId }: { chatbotId: string; knowledgeSourceId: string }) {
     try {
-      await this.index.namespace(chatbotId).deleteMany({ knowledgeSourceId });
+      const ns = chatbotId || "global";
+      await this.index.namespace(ns).deleteMany({ knowledgeSourceId });
     } catch (error) {
       logger.error({ err: error }, "Pinecone delete failed");
     }

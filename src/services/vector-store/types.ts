@@ -1,9 +1,9 @@
-export interface VectorMetadata {
-  chatbotId: string;
-  knowledgeSourceId: string;
-  chunkIndex: number;
-  label: string;
-}
+export type VectorMetadata = Record<string, any> & {
+  chatbotId?: string;
+  knowledgeSourceId?: string;
+  chunkIndex?: number;
+  label?: string;
+};
 
 export interface VectorMatch {
   id: string;
