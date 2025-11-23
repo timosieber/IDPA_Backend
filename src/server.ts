@@ -127,7 +127,7 @@ export const buildServer = (): Express => {
         console.error("URL fehlt!");
         return res.status(400).json({ error: "URL is required" });
       }
-      await knowledgeService.scrapeAndIngest(url as string);
+      await knowledgeService.scrapeAndIngest("system", "default-bot", { startUrls: [url] });
       res.json({ success: true });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);
