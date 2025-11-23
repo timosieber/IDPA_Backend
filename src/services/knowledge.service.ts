@@ -30,6 +30,7 @@ const SUMMARY_PROMPT = (title: string, chunk: string) =>
 const DEFAULT_SUMMARIZER_MODEL = "gpt-4o-mini";
 const MAX_CONCURRENCY = 10;
 const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE === "1";
+const PINECONE_DIMENSION_FALLBACK = 1024;
 
 export class KnowledgeService {
   private readonly vectorStore = getVectorStore();
@@ -155,7 +156,7 @@ export class KnowledgeService {
           cursor += 1;
           if (idx >= chunks.length) break;
           const chunk = chunks[idx]!;
-          const vector = await this.embedSafe(chunk.combined);
+          const vector = this.normalizeVector(await this.embedSafe(chunk.combined));
           const enrichedMetadata = {
             chatbotId: metadata.chatbotId ?? "global",
             knowledgeSourceId: metadata.knowledgeSourceId ?? metadata.sourceUrl ?? metadata.filename ?? "unknown",
@@ -193,6 +194,13 @@ export class KnowledgeService {
   private mockEmbedding(text: string): number[] {
     const hash = crypto.createHash("sha256").update(text).digest();
     return Array.from(hash).map((byte) => (byte / 255) * 2 - 1);
+  }
+
+  private normalizeVector(vector: number[]): number[] {
+    if (env.VECTOR_DB_PROVIDER === "pinecone" && vector.length > PINECONE_DIMENSION_FALLBACK) {
+      return vector.slice(0, PINECONE_DIMENSION_FALLBACK);
+    }
+    return vector;
   }
 }
 

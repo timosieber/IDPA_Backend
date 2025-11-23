@@ -26,6 +26,7 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
 };
 
 const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE === "1";
+const PINECONE_DIMENSION_FALLBACK = 1024;
 
 export class ChatService {
   private readonly vectorStore = getVectorStore();
@@ -247,18 +248,26 @@ export class ChatService {
 
   private async embedSafe(text: string): Promise<number[]> {
     if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
-      return this.mockEmbedding(text);
+      return this.normalizeVector(this.mockEmbedding(text));
     }
     try {
-      return await this.embeddings.embedQuery(text);
+      const vec = await this.embeddings.embedQuery(text);
+      return this.normalizeVector(vec);
     } catch {
-      return this.mockEmbedding(text);
+      return this.normalizeVector(this.mockEmbedding(text));
     }
   }
 
   private mockEmbedding(text: string): number[] {
     const hash = crypto.createHash("sha256").update(text).digest();
     return Array.from(hash).map((byte) => (byte / 255) * 2 - 1);
+  }
+
+  private normalizeVector(vec: number[]): number[] {
+    if (env.VECTOR_DB_PROVIDER === "pinecone" && vec.length > PINECONE_DIMENSION_FALLBACK) {
+      return vec.slice(0, PINECONE_DIMENSION_FALLBACK);
+    }
+    return vec;
   }
 }
 
