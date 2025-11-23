@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { getVectorStore } from "./vector-store/index.js";
 import { messageService } from "./message.service.js";
 import { BadRequestError } from "../utils/errors.js";
+import { prisma } from "../lib/prisma.js";
 
 // Debug hook to trace module load issues in ESM/ts-node
 console.log("[chat.service] module init");
@@ -27,18 +28,15 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
 
 const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE === "1";
 const PINECONE_DIMENSION_FALLBACK = 1024;
+const DEFAULT_CHAT_MODEL = "gpt-5.1";
 
 export class ChatService {
   private readonly vectorStore = getVectorStore();
   private readonly embeddings = new OpenAIEmbeddings({
     model: env.OPENAI_EMBEDDINGS_MODEL,
   });
-  private readonly chatModel = new ChatOpenAI({
-    model: env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
-    temperature: 0.2,
-  });
   private readonly rerankModel = new ChatOpenAI({
-    model: env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
+    model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
     temperature: 0,
   });
 
@@ -49,6 +47,8 @@ export class ChatService {
 
     const history = await messageService.getRecentMessages(session.id);
     await messageService.logMessage(session.id, "user", content);
+
+    const bot = await this.getChatbot(session.chatbotId);
 
     // Stage 1: Vector search
     const queryVector = await this.embedSafe(content);
@@ -65,12 +65,20 @@ export class ChatService {
     const contextString = this.buildContextString(topContexts);
     const citations = this.buildCitations(topContexts);
 
-    const systemPrompt = [
-      `Du bist ein Assistent für ${session.chatbot.name || "unser Projekt"}.`,
-      "Antworte NUR basierend auf dem folgenden Kontext.",
-      "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
-      "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
-    ].join(" ");
+    const systemPrompt = bot.systemPrompt
+      ? bot.systemPrompt
+      : [
+          `Du bist ein Assistent für ${bot.name || "unser Projekt"}.`,
+          bot.description ?? "",
+          "Antworte NUR basierend auf dem folgenden Kontext.",
+          "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
+          "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
+        ].join(" ");
+
+    const chatModel = new ChatOpenAI({
+      model: bot.model || env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+      temperature: 0.2,
+    });
 
     const messages = [
       { role: "system" as const, content: systemPrompt },
@@ -89,7 +97,7 @@ export class ChatService {
       const snippet = topContexts[0]?.content?.slice(0, 200) ?? "Keine Daten";
       answer = `Mock-Antwort (offline). Relevanter Kontext: ${snippet}`;
     } else {
-      const completion = await this.chatModel.invoke(messages);
+    const completion = await chatModel.invoke(messages);
       answer = typeof completion.content === "string"
         ? completion.content
         : Array.isArray(completion.content)
@@ -124,6 +132,8 @@ export class ChatService {
     message: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
   }) {
+    const bot = await this.getChatbot(chatbotId);
+
     const queryVector = await this.embedSafe(message);
     const vectorMatches = await this.vectorStore.similaritySearch({
       chatbotId,
@@ -136,12 +146,20 @@ export class ChatService {
     const contextString = this.buildContextString(topContexts);
     const citations = this.buildCitations(topContexts);
 
-    const systemPrompt = [
-      "Du bist ein Assistent für unser Projekt.",
-      "Antworte NUR basierend auf dem folgenden Kontext.",
-      "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
-      "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
-    ].join(" ");
+    const systemPrompt = bot.systemPrompt
+      ? bot.systemPrompt
+      : [
+          `Du bist ein Assistent für ${bot.name || "unser Projekt"}.`,
+          bot.description ?? "",
+          "Antworte NUR basierend auf dem folgenden Kontext.",
+          "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
+          "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
+        ].join(" ");
+
+    const chatModel = new ChatOpenAI({
+      model: bot.model || env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+      temperature: 0.2,
+    });
 
     const messages = [
       { role: "system" as const, content: systemPrompt },
@@ -154,7 +172,7 @@ export class ChatService {
       const snippet = topContexts[0]?.content?.slice(0, 200) ?? "Keine Daten";
       answer = `Mock-Antwort (offline). Relevanter Kontext: ${snippet}`;
     } else {
-      const completion = await this.chatModel.invoke(messages);
+      const completion = await chatModel.invoke(messages);
       answer = typeof completion.content === "string"
         ? completion.content
         : Array.isArray(completion.content)
@@ -268,6 +286,26 @@ export class ChatService {
       return vec.slice(0, PINECONE_DIMENSION_FALLBACK);
     }
     return vec;
+  }
+
+  private async getChatbot(chatbotId: string): Promise<{ id: string; name: string; description: string | null; systemPrompt: string | null; model: string | null }> {
+    const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } }).catch(() => null);
+    if (!bot) {
+      return {
+        id: chatbotId,
+        name: "RAG Assistant",
+        description: "Fallback Bot",
+        systemPrompt: null,
+        model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+      };
+    }
+    return {
+      id: bot.id,
+      name: bot.name,
+      description: bot.description ?? null,
+      systemPrompt: bot.systemPrompt as any as string | null ?? null,
+      model: bot.model ?? env.OPENAI_COMPLETIONS_MODEL ?? DEFAULT_CHAT_MODEL,
+    };
   }
 }
 

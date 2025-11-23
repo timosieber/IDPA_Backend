@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { getVectorStore } from "./vector-store/index.js";
 import { scraperRunner } from "./scraper/index.js";
 import type { ScrapeOptions, DatasetItem } from "./scraper/types.js";
+import { prisma } from "../lib/prisma.js";
 
 export interface IngestionInput {
   content: string; // Markdown
@@ -71,10 +72,21 @@ export class KnowledgeService {
 
   // Compatibility wrappers for legacy callers
   async listSources(_userId?: string, _chatbotId?: string) {
-    return [];
+    if (!_chatbotId) return [];
+    return prisma.knowledgeSource.findMany({
+      where: { chatbotId: _chatbotId },
+      orderBy: { createdAt: "desc" },
+    });
   }
 
   async deleteSource(_userId?: string, _id?: string) {
+    if (!_id) return true;
+    const source = await prisma.knowledgeSource.findUnique({ where: { id: _id } });
+    if (source) {
+      await this.vectorStore.deleteByKnowledgeSource({ chatbotId: source.chatbotId, knowledgeSourceId: source.id });
+      await this.vectorStore.deleteByChatbot({ chatbotId: source.chatbotId });
+      await prisma.knowledgeSource.delete({ where: { id: source.id } });
+    }
     return true;
   }
 
@@ -82,14 +94,25 @@ export class KnowledgeService {
     const title = label ?? _chatbotIdOrContent;
     const body = content ?? _chatbotIdOrContent;
     const markdown = `# ${title}\n\n${content}`;
+    const chatbotId = typeof _chatbotIdOrContent === "string" ? _chatbotIdOrContent : "default-bot";
+    const source = await this.upsertKnowledgeSource({
+      chatbotId,
+      label: title,
+      uri: null,
+      type: "TEXT",
+      metadata: {},
+    });
     await this.processIngestion({
       content: markdown,
       metadata: {
         title,
         type: "web",
-        chatbotId: typeof _chatbotIdOrContent === "string" ? _chatbotIdOrContent : "default-bot",
+        chatbotId,
+        knowledgeSourceId: source.id,
       },
     });
+    await prisma.knowledgeSource.update({ where: { id: source.id }, data: { status: "READY" } });
+    return source;
   }
 
   async scrapeAndIngest(_userId: string, _chatbotId: string, scrapeOptionsOrUrl: any) {
@@ -111,10 +134,19 @@ export class KnowledgeService {
       const markdown = `# ${title}\n\n${page.main_text || ""}`;
       if (!markdown.trim()) continue;
 
+      const source = await this.upsertKnowledgeSource({
+        chatbotId: _chatbotId || "default-bot",
+        label: title,
+        uri: page.canonical_url || page.page_url,
+        type: "URL",
+        metadata: { fetchedAt: page.fetched_at, meta: page.meta, lang: page.lang },
+      });
+
       await this.processIngestion({
         content: markdown,
         metadata: {
           chatbotId: _chatbotId || "default-bot",
+          knowledgeSourceId: source.id,
           title,
           sourceUrl: page.canonical_url || page.page_url,
           datePublished: page.fetched_at,
@@ -138,6 +170,40 @@ export class KnowledgeService {
     }
 
     return { sources: [{ id: "scrape", label: firstUrl, chunks: ingested }], pagesScanned: pages.length };
+  }
+
+  private async upsertKnowledgeSource({
+    chatbotId,
+    label,
+    uri,
+    type,
+    metadata,
+  }: {
+    chatbotId: string;
+    label: string;
+    uri: string | null;
+    type: "URL" | "TEXT" | "FILE";
+    metadata: Record<string, any>;
+  }) {
+    const existing = uri
+      ? await prisma.knowledgeSource.findFirst({ where: { chatbotId, uri } })
+      : null;
+    if (existing) {
+      return prisma.knowledgeSource.update({
+        where: { id: existing.id },
+        data: { label, metadata, status: "READY" },
+      });
+    }
+    return prisma.knowledgeSource.create({
+      data: {
+        chatbotId,
+        label,
+        uri,
+        type,
+        metadata,
+        status: "READY",
+      },
+    });
   }
 
   private async summarizeChunks(chunks: string[], title: string): Promise<EnrichedChunk[]> {
