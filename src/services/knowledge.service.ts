@@ -123,6 +123,9 @@ export class KnowledgeService {
         ? { startUrls: [scrapeOptionsOrUrl] }
         : scrapeOptionsOrUrl || {};
 
+    const cleanedStartUrls = (opts.startUrls || []).filter((u) => typeof u === "string" && u.trim().length > 0);
+    opts.startUrls = cleanedStartUrls;
+
     if (!opts.startUrls || !opts.startUrls.length) {
       throw new Error("URL fehlt für scrapeAndIngest");
     }

@@ -175,14 +175,17 @@ export const buildServer = (): Express => {
     try {
       console.log("Scrape Request empfangen. Body:", req.body);
       const body = req.body || {};
-      const url = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
+      const rawUrl = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
+      const url = typeof rawUrl === "string" ? rawUrl.trim() : null;
       const chatbotId = body.chatbotId || "default-bot";
       if (!url) {
         console.error("URL fehlt!");
         return res.status(400).json({ error: "URL is required" });
       }
       const options = {
-        startUrls: Array.isArray(body.startUrls) && body.startUrls.length ? body.startUrls : [url],
+        startUrls: Array.isArray(body.startUrls) && body.startUrls.length
+          ? body.startUrls.filter((u: string) => typeof u === "string" && u.trim().length > 0)
+          : [url],
         maxDepth: body.maxDepth,
         maxPages: body.maxPages,
         respectRobotsTxt: body.respectRobotsTxt,
