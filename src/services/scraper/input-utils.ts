@@ -25,6 +25,9 @@ export const buildScraperInputPayload = (
   extras?: { perplexityApiKey?: string },
 ) => {
   const normalizedUrls = ensureArray(options.startUrls).map((url) => ({ url }));
+  if (!normalizedUrls.length) {
+    throw new Error("startUrls dürfen nicht leer sein");
+  }
 
   const inputPayload = {
     ...DEFAULT_SCRAPER_INPUT,

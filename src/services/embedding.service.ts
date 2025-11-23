@@ -24,7 +24,6 @@ class EmbeddingService {
     const response = await this.client.embeddings.create({
       model: env.OPENAI_EMBEDDINGS_MODEL,
       input: text,
-      dimensions: 1024, // Explizit 1024 Dimensionen für Pinecone-Kompatibilität
     });
 
     return response.data[0]?.embedding ?? this.mockEmbedding(text);

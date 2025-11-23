@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { knowledgeService } from "../services/knowledge.service.js";
+import { prisma } from "../lib/prisma.js";
 
 const router = Router();
 
@@ -58,8 +59,30 @@ router.post("/sources/scrape", async (req, res, next) => {
       ...(payload.rateLimitPerHost !== undefined ? { rateLimitPerHost: payload.rateLimitPerHost } : {}),
       ...(payload.allowFullDownload !== undefined ? { allowFullDownload: payload.allowFullDownload } : {}),
     };
-    const result = await knowledgeService.scrapeAndIngest(req.user!.id, payload.chatbotId, scrapeOptions);
-    res.status(201).json(result);
+    // Create pending placeholder
+    const pendingSource = await prisma.knowledgeSource.create({
+      data: {
+        chatbotId: payload.chatbotId,
+        label: payload.startUrls[0] ?? "Scrape",
+        type: "URL",
+        status: "PENDING",
+        uri: payload.startUrls[0] ?? null,
+        metadata: {},
+      },
+    });
+
+    // Fire-and-forget background job
+    void knowledgeService
+      .scrapeAndIngest(req.user!.id, payload.chatbotId, scrapeOptions)
+      .then(async () => {
+        await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "READY" } });
+      })
+      .catch(async (err) => {
+        await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "FAILED" } });
+        console.error("Background scrape failed", err);
+      });
+
+    res.status(202).json({ status: "PENDING", sourceId: pendingSource.id });
   } catch (error) {
     next(error);
   }

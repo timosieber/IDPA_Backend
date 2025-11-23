@@ -17,16 +17,19 @@ const DEFAULT_CHATBOT_ID = "default-bot";
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     if (!origin) return callback(null, true);
-
-    const isLocalhost = LOCALHOST_PORTS.some((port) => origin.startsWith(`http://localhost:${port}`) || origin.startsWith(`http://127.0.0.1:${port}`));
+    const isLocalhost = LOCALHOST_PORTS.some(
+      (port) => origin.startsWith(`http://localhost:${port}`) || origin.startsWith(`http://127.0.0.1:${port}`),
+    );
     const isAllowedEnv = env.CORS_ALLOWED_ORIGINS_LIST.length
       ? env.CORS_ALLOWED_ORIGINS_LIST.includes(origin)
-      : false;
-
+      : true;
     if (isLocalhost || isAllowedEnv) return callback(null, true);
-    return callback(new Error("Origin not allowed by CORS"));
+    return callback(null, true);
   },
   credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Accept"],
+  optionsSuccessStatus: 200,
 };
 
 export const buildServer = (): Express => {
@@ -195,14 +198,14 @@ export const buildServer = (): Express => {
         rateLimitPerHost: body.rateLimitPerHost,
         allowFullDownload: body.allowFullDownload,
       };
-      await knowledgeService.scrapeAndIngest("system", chatbotId, options);
-      // Mark chatbot as ACTIVE when ingestion succeeds
-      try {
-        await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
-      } catch (err) {
-        console.error("Could not update chatbot status after scrape", err);
-      }
-      res.json({ success: true });
+      // fire-and-forget
+      void knowledgeService
+        .scrapeAndIngest("system", chatbotId, options)
+        .then(async () => {
+          await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
+        })
+        .catch((err) => console.error("ScrapeAndIngest Fehler:", err));
+      res.status(202).json({ status: "PENDING" });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);
       next(err);
