@@ -61,6 +61,13 @@ export const buildServer = (): Express => {
     updatedAt: bot?.updatedAt ?? new Date().toISOString(),
   });
   const defaultBot = makeBot();
+  const ensureSystemUser = async () => {
+    const email = "system@local";
+    const existing = await prisma.user.findFirst({ where: { email } });
+    if (existing) return existing.id;
+    const created = await prisma.user.create({ data: { email } });
+    return created.id;
+  };
 
   app.get("/api/chatbots", async (_req, res) => {
     try {
@@ -76,7 +83,7 @@ export const buildServer = (): Express => {
   app.post("/api/chatbots", async (req, res) => {
     try {
       const name = req.body?.name || "RAG Assistant";
-      const userId = req.body?.userId || "system";
+      const userId = req.body?.userId || (await ensureSystemUser());
       const bot = await prisma.chatbot.create({
         data: {
           userId,
