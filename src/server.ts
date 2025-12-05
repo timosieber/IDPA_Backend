@@ -113,7 +113,10 @@ export const buildServer = (): Express => {
 
   app.get("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
     try {
-      const bot = await prisma.chatbot.findUnique({ where: { id: req.params.id } });
+      const chatbotId = req.params.id;
+      if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
+
+      const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
       if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
       if (bot.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
       return res.json(makeBot(bot));
@@ -126,6 +129,8 @@ export const buildServer = (): Express => {
   app.patch("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
     try {
       const chatbotId = req.params.id;
+      if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
+
       const existing = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
       if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
       if (existing.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
