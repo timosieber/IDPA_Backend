@@ -66,7 +66,7 @@ Verwende klare Anweisungen und konkrete Beispiele.`;
 
     try {
       const completion = await this.client.chat.completions.create({
-        model: "gpt-4o",
+        model: env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
         messages: [
           {
             role: "system",

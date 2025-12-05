@@ -27,13 +27,15 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
 };
 
 const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE === "1";
-const PINECONE_DIMENSION_FALLBACK = 1024;
-const DEFAULT_CHAT_MODEL = "gpt-5.1";
+// Pinecone unterstützt nur bestimmte Dimensionen (384, 512, 768, 1024, 2048)
+const EMBEDDING_DIMENSION = 1024;
+const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
 
 export class ChatService {
   private readonly vectorStore = getVectorStore();
   private readonly embeddings = new OpenAIEmbeddings({
     model: env.OPENAI_EMBEDDINGS_MODEL,
+    dimensions: EMBEDDING_DIMENSION, // OpenAI text-embedding-3-* unterstützt dimension reduction
   });
   private readonly rerankModel = new ChatOpenAI({
     model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
@@ -282,8 +284,15 @@ export class ChatService {
   }
 
   private normalizeVector(vec: number[]): number[] {
-    if (env.VECTOR_DB_PROVIDER === "pinecone" && vec.length > PINECONE_DIMENSION_FALLBACK) {
-      return vec.slice(0, PINECONE_DIMENSION_FALLBACK);
+    // Mock-Embeddings (SHA256) sind nur 32 Dimensionen - auf EMBEDDING_DIMENSION auffüllen
+    if (vec.length < EMBEDDING_DIMENSION) {
+      const padded = new Array(EMBEDDING_DIMENSION).fill(0);
+      vec.forEach((v, i) => (padded[i] = v));
+      return padded;
+    }
+    // Falls Vektor zu lang ist (sollte nicht passieren), kürzen
+    if (vec.length > EMBEDDING_DIMENSION) {
+      return vec.slice(0, EMBEDDING_DIMENSION);
     }
     return vec;
   }

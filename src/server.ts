@@ -8,6 +8,7 @@ import { chatService } from "./services/chat.service.js";
 import { knowledgeService } from "./services/knowledge.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import { requireDashboardAuth } from "./middleware/require-auth.js";
 import { prisma } from "./lib/prisma.js";
 import { randomUUID } from "node:crypto";
 
@@ -16,15 +17,22 @@ const DEFAULT_CHATBOT_ID = "default-bot";
 
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Erlaube Requests ohne Origin (z.B. Server-to-Server, Postman)
     if (!origin) return callback(null, true);
+
     const isLocalhost = LOCALHOST_PORTS.some(
       (port) => origin.startsWith(`http://localhost:${port}`) || origin.startsWith(`http://127.0.0.1:${port}`),
     );
     const isAllowedEnv = env.CORS_ALLOWED_ORIGINS_LIST.length
       ? env.CORS_ALLOWED_ORIGINS_LIST.includes(origin)
-      : true;
-    if (isLocalhost || isAllowedEnv) return callback(null, true);
-    return callback(null, true);
+      : false; // Default: nicht erlaubt, wenn keine Origins konfiguriert
+
+    if (isLocalhost || isAllowedEnv) {
+      return callback(null, true);
+    }
+
+    // Origin nicht erlaubt
+    return callback(new Error(`Origin ${origin} nicht erlaubt durch CORS`), false);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -59,27 +67,23 @@ export const buildServer = (): Express => {
     logoUrl: bot.logoUrl ?? null,
     allowedDomains: bot.allowedDomains ?? [],
     theme: bot.theme ?? null,
-    model: bot.model ?? "gpt-4o",
+    model: bot.model ?? "gpt-4o-mini",
     status: bot.status ?? "ACTIVE",
     createdAt: bot.createdAt ?? new Date().toISOString(),
     updatedAt: bot.updatedAt ?? new Date().toISOString(),
   });
-  const ensureSystemUser = async () => {
-    const email = "system@local";
-    const existing = await prisma.user.findFirst({ where: { email } });
-    if (existing) return existing.id;
-    const created = await prisma.user.create({ data: { email } });
-    return created.id;
-  };
 
   const getBot = async (chatbotId: string) => {
     const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
     return bot;
   };
 
-  app.get("/api/chatbots", async (_req, res) => {
+  app.get("/api/chatbots", requireDashboardAuth, async (req, res) => {
     try {
-      const bots = await prisma.chatbot.findMany({ orderBy: { createdAt: "desc" } });
+      const bots = await prisma.chatbot.findMany({
+        where: { userId: req.user!.id },
+        orderBy: { createdAt: "desc" },
+      });
       return res.json(bots.map(makeBot));
     } catch (err) {
       console.error("GET /api/chatbots error:", err);
@@ -87,17 +91,16 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.post("/api/chatbots", async (req, res) => {
+  app.post("/api/chatbots", requireDashboardAuth, async (req, res) => {
     try {
       const name = req.body?.name || "RAG Assistant";
-      const userId = req.body?.userId || (await ensureSystemUser());
       const bot = await prisma.chatbot.create({
         data: {
-          userId,
+          userId: req.user!.id,
           name,
           description: req.body?.description ?? null,
           allowedDomains: Array.isArray(req.body?.allowedDomains) ? req.body.allowedDomains : [],
-          model: req.body?.model || env.OPENAI_COMPLETIONS_MODEL || "gpt-5.1",
+          model: req.body?.model || env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
           status: req.body?.status || "DRAFT",
         },
       });
@@ -108,10 +111,11 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.get("/api/chatbots/:id", async (req, res) => {
+  app.get("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
     try {
       const bot = await prisma.chatbot.findUnique({ where: { id: req.params.id } });
       if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
+      if (bot.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
       return res.json(makeBot(bot));
     } catch (err) {
       console.error("GET /api/chatbots/:id error:", err);
@@ -119,20 +123,50 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.patch("/api/chatbots/:id", (req, res) => {
-    res.status(501).json({ error: "Not implemented" });
+  app.patch("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
+    try {
+      const chatbotId = req.params.id;
+      const existing = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
+      if (existing.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
+
+      const updateData: Record<string, unknown> = {};
+      if (req.body?.name !== undefined) updateData.name = req.body.name;
+      if (req.body?.description !== undefined) updateData.description = req.body.description;
+      if (req.body?.systemPrompt !== undefined) updateData.systemPrompt = req.body.systemPrompt;
+      if (req.body?.logoUrl !== undefined) updateData.logoUrl = req.body.logoUrl;
+      if (req.body?.theme !== undefined) updateData.theme = req.body.theme;
+      if (req.body?.model !== undefined) updateData.model = req.body.model;
+      if (req.body?.status !== undefined) updateData.status = req.body.status;
+      if (req.body?.allowedDomains !== undefined) updateData.allowedDomains = req.body.allowedDomains;
+
+      const updated = await prisma.chatbot.update({
+        where: { id: chatbotId },
+        data: updateData,
+      });
+
+      res.json(makeBot(updated));
+    } catch (err) {
+      console.error("PATCH /api/chatbots/:id error:", err);
+      res.status(400).json({ error: "Chatbot konnte nicht aktualisiert werden" });
+    }
   });
 
-  app.delete("/api/chatbots/:id", async (req, res) => {
+  app.delete("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
     const chatbotId = req.params.id;
+    if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
+
     try {
+      const existing = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
+      if (existing.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
+
       await knowledgeService.purgeChatbotVectors(chatbotId);
       await prisma.chatbot.delete({ where: { id: chatbotId } });
       res.status(204).send();
     } catch (err) {
       console.error("DELETE /api/chatbots/:id error:", err);
-      // still return 204 to keep frontend flowing
-      res.status(204).send();
+      res.status(500).json({ error: "Fehler beim Löschen" });
     }
   });
 
@@ -163,28 +197,47 @@ export const buildServer = (): Express => {
     }
   });
 
-  // Knowledge routes (legacy friendly)
-  app.get("/api/knowledge/sources", async (req, res, next) => {
+  // Knowledge routes (protected)
+  app.get("/api/knowledge/sources", requireDashboardAuth, async (req, res, next) => {
     try {
       const chatbotId = (req.query?.chatbotId as string) || undefined;
-      const sources = await knowledgeService.listSources(undefined, chatbotId).catch(() => []);
+      if (chatbotId) {
+        // Prüfe ob der User Zugriff auf diesen Chatbot hat
+        const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+        if (!bot || bot.userId !== req.user!.id) {
+          return res.status(403).json({ error: "Zugriff verweigert" });
+        }
+      }
+      const sources = await knowledgeService.listSources(req.user!.id, chatbotId).catch(() => []);
       res.json(sources ?? []);
     } catch (err) {
       next(err);
     }
   });
 
-  app.post("/api/knowledge/sources/scrape", async (req, res, next) => {
+  app.post("/api/knowledge/sources/scrape", requireDashboardAuth, async (req, res, next) => {
     try {
       console.log("Scrape Request empfangen. Body:", req.body);
       const body = req.body || {};
       const rawUrl = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
       const url = typeof rawUrl === "string" ? rawUrl.trim() : null;
-      const chatbotId = body.chatbotId || "default-bot";
+      const chatbotId = body.chatbotId;
+
+      if (!chatbotId) {
+        return res.status(400).json({ error: "chatbotId is required" });
+      }
+
+      // Prüfe ob der User Zugriff auf diesen Chatbot hat
+      const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      if (!bot || bot.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Zugriff verweigert" });
+      }
+
       if (!url) {
         console.error("URL fehlt!");
         return res.status(400).json({ error: "URL is required" });
       }
+
       const options = {
         startUrls: Array.isArray(body.startUrls) && body.startUrls.length
           ? body.startUrls.filter((u: string) => typeof u === "string" && u.trim().length > 0)
@@ -198,13 +251,15 @@ export const buildServer = (): Express => {
         rateLimitPerHost: body.rateLimitPerHost,
         allowFullDownload: body.allowFullDownload,
       };
-      // fire-and-forget
+
+      // fire-and-forget mit User-ID
       void knowledgeService
-        .scrapeAndIngest("system", chatbotId, options)
+        .scrapeAndIngest(req.user!.id, chatbotId, options)
         .then(async () => {
           await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
         })
         .catch((err) => console.error("ScrapeAndIngest Fehler:", err));
+
       res.status(202).json({ status: "PENDING" });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);
@@ -212,20 +267,40 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.post("/api/knowledge/sources/text", async (req, res, next) => {
+  app.post("/api/knowledge/sources/text", requireDashboardAuth, async (req, res, next) => {
     try {
-      const { title, content } = req.body || {};
+      const { chatbotId, title, content } = req.body || {};
+      if (!chatbotId) return res.status(400).json({ error: "chatbotId ist erforderlich" });
       if (!title || !content) return res.status(400).json({ error: "title und content sind erforderlich" });
-      await knowledgeService.addTextSource(title, content);
+
+      // Prüfe ob der User Zugriff auf diesen Chatbot hat
+      const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      if (!bot || bot.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Zugriff verweigert" });
+      }
+
+      await knowledgeService.addTextSource(req.user!.id, chatbotId, title, content);
       res.status(201).json({ success: true });
     } catch (err) {
       next(err);
     }
   });
 
-  app.delete("/api/knowledge/sources/:id", async (req, res, next) => {
+  app.delete("/api/knowledge/sources/:id", requireDashboardAuth, async (req, res, next) => {
     try {
-      await knowledgeService.deleteSource(req.params.id);
+      const sourceId = req.params.id;
+      if (!sourceId) return res.status(400).json({ error: "source id required" });
+
+      // Prüfe ob der User Zugriff auf diese Source hat
+      const source = await prisma.knowledgeSource.findUnique({
+        where: { id: sourceId },
+        include: { chatbot: true },
+      });
+      if (!source || source.chatbot.userId !== req.user!.id) {
+        return res.status(403).json({ error: "Zugriff verweigert" });
+      }
+
+      await knowledgeService.deleteSource(req.user!.id, sourceId);
       res.status(204).send();
     } catch (err) {
       next(err);
@@ -234,29 +309,76 @@ export const buildServer = (): Express => {
 
   // Minimal chat session/messages endpoints for widget compatibility
   app.post("/api/chat/sessions", async (req, res) => {
-    const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
-    if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
-    const bot = await getBot(chatbotId);
-    if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
-    if (bot.status !== "ACTIVE") return res.status(503).json({ error: "Chatbot wird vorbereitet" });
-    const sessionId = randomUUID();
-    const token = randomUUID();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    res.status(201).json({ sessionId, token, expiresAt, chatbotId });
+    try {
+      const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
+      if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
+
+      const bot = await getBot(chatbotId);
+      if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
+      if (bot.status !== "ACTIVE") return res.status(503).json({ error: "Chatbot wird vorbereitet" });
+
+      const token = randomUUID();
+      const expiresAt = new Date(Date.now() + env.SESSION_TTL_MINUTES * 60 * 1000);
+      const origin = req.headers.origin || req.headers.referer || "unknown";
+      const ip = req.ip || req.socket.remoteAddress || null;
+
+      // Session in DB speichern
+      const session = await prisma.session.create({
+        data: {
+          chatbotId,
+          origin,
+          ip,
+          token,
+          expiresAt,
+        },
+      });
+
+      res.status(201).json({
+        sessionId: session.id,
+        token: session.token,
+        expiresAt: session.expiresAt.toISOString(),
+        chatbotId,
+      });
+    } catch (err) {
+      console.error("POST /api/chat/sessions error:", err);
+      res.status(500).json({ error: "Fehler beim Erstellen der Session" });
+    }
   });
 
   app.post("/api/chat/messages", async (req, res, next) => {
     try {
-      let chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
-      // Fallback: aus Session ableiten
-      if (!chatbotId && req.body?.sessionId) {
-        const session = await prisma.session.findUnique({ where: { id: req.body.sessionId } });
-        chatbotId = session?.chatbotId;
+      const sessionId = req.body?.sessionId;
+      const sessionToken = req.body?.token || req.headers.authorization?.replace("Bearer ", "");
+
+      // Session validieren
+      let session = null;
+      if (sessionId) {
+        session = await prisma.session.findUnique({
+          where: { id: sessionId },
+          include: { chatbot: true },
+        });
+
+        if (!session) {
+          return res.status(401).json({ error: "Session nicht gefunden" });
+        }
+
+        if (session.token !== sessionToken) {
+          return res.status(401).json({ error: "Ungültiges Session-Token" });
+        }
+
+        if (new Date() > session.expiresAt) {
+          return res.status(401).json({ error: "Session abgelaufen" });
+        }
       }
+
+      // chatbotId aus Session oder Request
+      let chatbotId = session?.chatbotId || req.body?.chatbotId || (req.query?.chatbotId as string);
       if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
-      const bot = await getBot(chatbotId);
+
+      const bot = session?.chatbot || await getBot(chatbotId);
       if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
       if (bot.status !== "ACTIVE") return res.status(503).json({ error: "Chatbot wird vorbereitet" });
+
       const message = req.body?.message || req.body?.question || req.body?.prompt;
       if (!message) return res.status(400).json({ error: "message is required" });
 
@@ -265,7 +387,13 @@ export const buildServer = (): Express => {
         message,
         history: Array.isArray(req.body?.history) ? req.body.history : [],
       });
-      res.json({ sessionId: req.body?.sessionId ?? null, answer: result.answer, context: result.context, sources: result.sources });
+
+      res.json({
+        sessionId: sessionId ?? null,
+        answer: result.answer,
+        context: result.context,
+        sources: result.sources,
+      });
     } catch (err) {
       next(err);
     }
