@@ -6,7 +6,7 @@ import { getVectorStore } from "./vector-store/index.js";
 import { scraperRunner } from "./scraper/index.js";
 import type { ScrapeOptions, DatasetItem } from "./scraper/types.js";
 import { prisma } from "../lib/prisma.js";
-import { promptGeneratorService } from "./prompt-generator.service.js";
+import { promptGeneratorService, type RagPromptSourceInput } from "./prompt-generator.service.js";
 
 export interface IngestionInput {
   content: string; // Markdown
@@ -119,6 +119,8 @@ export class KnowledgeService {
     });
 
     await prisma.knowledgeSource.update({ where: { id: source.id }, data: { status: "READY" } });
+    // Auto-Update Prompt nur wenn noch kein Custom Prompt gesetzt ist
+    await this.tryUpdateAutoSystemPromptFromRag(chatbotId);
     return source;
   }
 
@@ -151,17 +153,6 @@ export class KnowledgeService {
     try {
       const pages: DatasetItem[] = await scraperRunner.run(opts);
       let ingested = 0;
-
-      // Versuche System Prompt aus gescrapten Seiten zu generieren
-      try {
-        const generatedPrompt = await promptGeneratorService.generateSystemPrompt(pages as any);
-        await prisma.chatbot.update({
-          where: { id: _chatbotId },
-          data: { systemPrompt: generatedPrompt },
-        });
-      } catch (err) {
-        console.error("System Prompt Generierung fehlgeschlagen", err);
-      }
 
       // Lösche den Tracking-Eintrag, da wir jetzt echte Sources erstellen
       await prisma.knowledgeSource.delete({ where: { id: trackingSource.id } }).catch(() => {});
@@ -263,6 +254,9 @@ export class KnowledgeService {
         });
         ingested = 1;
       }
+
+      // Prompt NACH erfolgreicher Ingestion aus der Wissensbasis generieren (ohne Halluzination)
+      await this.tryUpdateAutoSystemPromptFromRag(_chatbotId);
 
       return { sources: [{ id: "scrape", label: firstUrl, chunks: ingested }], pagesScanned: pages.length };
     } catch (error) {
@@ -457,6 +451,69 @@ export class KnowledgeService {
     } catch (err) {
       // swallow, log if needed
       console.error("purgeChatbotVectors error", err);
+    }
+  }
+
+  private stripContextHeader(text: string): string {
+    return text.replace(/^\[Kontext:[^\]]*\]\s*/u, "").trim();
+  }
+
+  private async tryUpdateAutoSystemPromptFromRag(chatbotId: string) {
+    try {
+      const bot = await prisma.chatbot.findUnique({
+        where: { id: chatbotId },
+        select: { systemPrompt: true, theme: true },
+      }).catch(() => null);
+      if (!bot) return;
+
+      const theme = (bot.theme && typeof bot.theme === "object" ? bot.theme as Record<string, unknown> : {}) ?? {};
+      const autoFlag = Boolean((theme as any).autoSystemPrompt);
+
+      // Nur überschreiben, wenn noch kein Prompt existiert oder es ein Auto-Prompt ist
+      if (bot.systemPrompt && !autoFlag) return;
+
+      const sources = await prisma.knowledgeSource.findMany({
+        where: { chatbotId, status: "READY" },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, label: true, uri: true, type: true },
+        take: 12,
+      });
+
+      const ragSources: RagPromptSourceInput[] = [];
+      for (const src of sources) {
+        const chunks = await prisma.embedding.findMany({
+          where: { knowledgeSourceId: src.id },
+          orderBy: { tokenCount: "desc" },
+          select: { content: true },
+          take: 2,
+        }).catch(() => []);
+
+        const snippets = chunks
+          .map((c) => this.stripContextHeader(c.content))
+          .map((c) => c.slice(0, 900))
+          .filter((c) => c.trim().length > 0);
+
+        if (!snippets.length) continue;
+        ragSources.push({ label: src.label, uri: src.uri, type: src.type, snippets });
+      }
+
+      const generated = await promptGeneratorService.generateSystemPromptFromRag(ragSources);
+      const nextTheme = {
+        ...theme,
+        autoSystemPrompt: true,
+        autoSystemPromptVersion: 1,
+        autoSystemPromptUpdatedAt: new Date().toISOString(),
+      };
+
+      await prisma.chatbot.update({
+        where: { id: chatbotId },
+        data: {
+          systemPrompt: generated,
+          theme: nextTheme,
+        },
+      });
+    } catch (err) {
+      console.error("Auto System Prompt (RAG) Generierung fehlgeschlagen", err);
     }
   }
 }

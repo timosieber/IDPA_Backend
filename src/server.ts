@@ -146,6 +146,16 @@ export const buildServer = (): Express => {
       if (req.body?.status !== undefined) updateData.status = req.body.status;
       if (req.body?.allowedDomains !== undefined) updateData.allowedDomains = req.body.allowedDomains;
 
+      // If the user updates the system prompt manually, disable auto-system-prompt updates.
+      if (req.body?.systemPrompt !== undefined) {
+        const existingTheme = existing.theme && typeof existing.theme === "object" ? existing.theme as Record<string, unknown> : {};
+        const requestedTheme = req.body?.theme && typeof req.body.theme === "object" ? req.body.theme as Record<string, unknown> : null;
+        updateData.theme = {
+          ...(requestedTheme ?? existingTheme),
+          autoSystemPrompt: false,
+        };
+      }
+
       const updated = await prisma.chatbot.update({
         where: { id: chatbotId },
         data: updateData,

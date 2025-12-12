@@ -16,6 +16,13 @@ interface ScrapedPageData {
   main_text?: string | null;
 }
 
+export interface RagPromptSourceInput {
+  label: string;
+  uri: string | null;
+  type: "URL" | "TEXT" | "FILE";
+  snippets: string[];
+}
+
 class PromptGeneratorService {
   private readonly client?: OpenAI;
   private static readonly TOOL_NAME = "search_knowledge_base";
@@ -92,6 +99,78 @@ Verwende klare Anweisungen und konkrete Beispiele.`;
       return this.getDefaultPrompt();
     } catch (error) {
       logger.error({ err: error }, "Fehler bei Prompt-Generierung");
+      return this.getDefaultPrompt();
+    }
+  }
+
+  /**
+   * Generiert einen Custom System Prompt NUR aus RAG/Wissensbasis-Auszügen.
+   * Wichtig: Keine erfundenen Leistungen/Programme – nur was in den Snippets steht.
+   */
+  async generateSystemPromptFromRag(sources: RagPromptSourceInput[]): Promise<string> {
+    if (!this.client) {
+      logger.warn("OPENAI_API_KEY nicht gesetzt – Verwende Default-Prompt");
+      return this.getDefaultPrompt();
+    }
+
+    const compactSources = sources
+      .filter((s) => s.snippets?.some((t) => t.trim().length > 0))
+      .slice(0, 10)
+      .map((s) => ({
+        label: s.label,
+        uri: s.uri,
+        type: s.type,
+        snippets: s.snippets.map((t) => t.slice(0, 900)),
+      }));
+
+    const promptGenerationPrompt = [
+      "Du bist ein Experte für die Erstellung von Chatbot System Prompts.",
+      "",
+      "Du erhältst Auszüge aus der Wissensbasis (RAG) eines Unternehmens.",
+      "Erstelle daraus einen präzisen System Prompt für einen Support-Chatbot.",
+      "",
+      "KRITISCHE REGELN:",
+      "- Erfinde KEINE Produkte/Programme/Services/Personen/Adressen.",
+      "- Wenn Informationen nicht in den Auszügen stehen: Der Chatbot soll kurz nachfragen oder 'Das wissen wir aktuell nicht' sagen.",
+      "- Keine Floskeln wie 'Vielen Dank für Ihre Anfrage'.",
+      "- Kurze, konkrete Antworten (2–4 Sätze).",
+      "- Professionell und freundlich auf Deutsch.",
+      "",
+      "Wissensbasis-Auszüge (Quellen + Text):",
+      JSON.stringify(compactSources, null, 2),
+      "",
+      "FORMAT:",
+      "- Der Prompt muss direkt verwendbar sein (keine Einleitung).",
+      "- Enthält klare Regeln + 1–2 Beispiele, wie man auf Fragen zu Anmeldung/Kontakt reagiert (nur wenn in den Auszügen Hinweise dazu vorkommen).",
+    ].join("\n");
+
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "Du bist ein Experte für Chatbot-Prompt-Engineering. Erstelle präzise, effektive System Prompts ohne Halluzinationen.",
+          },
+          {
+            role: "user",
+            content: promptGenerationPrompt,
+          },
+        ],
+        max_tokens: 900,
+        temperature: 0.4,
+      });
+
+      const generatedPrompt = completion.choices[0]?.message?.content?.trim();
+      if (generatedPrompt) {
+        logger.info("RAG System Prompt erfolgreich generiert");
+        return this.sanitizeSystemPrompt(generatedPrompt);
+      }
+
+      logger.warn("Keine Antwort von OpenAI – Verwende Default-Prompt");
+      return this.getDefaultPrompt();
+    } catch (error) {
+      logger.error({ err: error }, "Fehler bei RAG Prompt-Generierung");
       return this.getDefaultPrompt();
     }
   }
