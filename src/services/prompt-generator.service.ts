@@ -18,6 +18,7 @@ interface ScrapedPageData {
 
 class PromptGeneratorService {
   private readonly client?: OpenAI;
+  private static readonly TOOL_NAME = "search_knowledge_base";
 
   constructor() {
     if (env.OPENAI_API_KEY) {
@@ -52,13 +53,12 @@ Wichtige Keywords: ${companyInfo.keywords.join(", ")}
 WICHTIGE FEATURES:
 ${companyInfo.features.map(f => `- ${f}`).join("\n")}
 
-Erstelle einen System Prompt, der:
+    Erstelle einen System Prompt, der:
 1. Die Unternehmensperspektive nutzt ("wir", "uns", "unser")
 2. Kurze, präzise Antworten fördert (max 2-3 Sätze)
-3. Das search_knowledge_base Tool erwähnt
-4. Die Hauptprodukte/Services klar benennt
-5. Professionell und freundlich ist
-6. Auf Deutsch formuliert ist
+3. Die Hauptprodukte/Services klar benennt
+4. Professionell und freundlich ist
+5. Auf Deutsch formuliert ist
 
 FORMAT:
 Der Prompt sollte direkt verwendbar sein (keine Einleitung wie "Hier ist der Prompt:").
@@ -85,7 +85,7 @@ Verwende klare Anweisungen und konkrete Beispiele.`;
 
       if (generatedPrompt) {
         logger.info("System Prompt erfolgreich generiert");
-        return generatedPrompt;
+        return this.sanitizeSystemPrompt(generatedPrompt);
       }
 
       logger.warn("Keine Antwort von OpenAI – Verwende Default-Prompt");
@@ -231,8 +231,16 @@ Verwende klare Anweisungen und konkrete Beispiele.`;
 Wichtige Regeln:
 - Sprich aus Unternehmensperspektive (wir, uns, unser)
 - Halte Antworten kurz und präzise (max 2-3 Sätze)
-- Nutze das search_knowledge_base Tool für Informationen
 - Antworte professionell und freundlich auf Deutsch`;
+  }
+
+  private sanitizeSystemPrompt(prompt: string): string {
+    // Das Backend nutzt im produktiven Chat-Flow aktuell keine Tool-Calls.
+    // Entferne Tool-Referenzen, damit das Modell keine nicht verfügbare Fähigkeit "halluziniert".
+    const tool = PromptGeneratorService.TOOL_NAME;
+    const lines = prompt.split("\n");
+    const filtered = lines.filter((line) => !line.toLowerCase().includes(tool.toLowerCase()));
+    return filtered.join("\n").replace(/\n{3,}/g, "\n\n").trim();
   }
 }
 

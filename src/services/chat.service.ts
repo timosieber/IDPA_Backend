@@ -248,7 +248,7 @@ export class ChatService {
       .map((ctx, i) => {
         const meta = ctx.metadata || {};
         const title = meta.title || meta.label || meta.filename || meta.sourceUrl || `Quelle ${i + 1}`;
-        const url = meta.sourceUrl || meta.filename || "N/A";
+        const url = meta.sourceUrl || meta.uri || meta.filename || "N/A";
         const date = meta.datePublished ? ` (Datum: ${meta.datePublished})` : "";
         return `### ${title}${date}\nURL: ${url}\n${ctx.content}`;
       })
@@ -260,7 +260,7 @@ export class ChatService {
     const parts = contexts.map((ctx, i) => {
       const meta = ctx.metadata || {};
       const title = meta.title || meta.label || meta.filename || `Quelle ${i + 1}`;
-      const url = meta.sourceUrl || meta.filename || "N/A";
+      const url = meta.sourceUrl || meta.uri || meta.filename || "N/A";
       return `[${title}](${url})`;
     });
     return Array.from(new Set(parts)).join(" ");

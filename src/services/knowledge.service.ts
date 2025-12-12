@@ -302,6 +302,15 @@ export class KnowledgeService {
       ? await prisma.knowledgeSource.findFirst({ where: { chatbotId, uri } })
       : null;
     if (existing) {
+      // Re-ingestion (z.B. re-scrape): alte Vektoren/Chunks entfernen, sonst entstehen Duplikate
+      try {
+        await this.vectorStore.deleteByKnowledgeSource({ chatbotId, knowledgeSourceId: existing.id });
+      } catch (err) {
+        console.error("deleteByKnowledgeSource failed", err);
+      }
+      // Pinecone-Löschung nutzt Embedding-Rows als VectorId-Quelle -> erst danach DB-rows löschen
+      await prisma.embedding.deleteMany({ where: { knowledgeSourceId: existing.id } }).catch(() => {});
+
       return prisma.knowledgeSource.update({
         where: { id: existing.id },
         data: { label, metadata, status: "READY" },
@@ -378,6 +387,7 @@ export class KnowledgeService {
           knowledgeSourceId: knowledgeSourceId ?? metadata.sourceUrl ?? metadata.filename ?? "unknown",
           title: metadata.title,
           sourceUrl: metadata.sourceUrl,
+          uri: metadata.sourceUrl ?? metadata.filename ?? null,
           filename: metadata.filename,
           datePublished: metadata.datePublished,
           type: metadata.type,
