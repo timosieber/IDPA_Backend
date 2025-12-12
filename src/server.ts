@@ -453,6 +453,11 @@ export const buildServer = (): Express => {
         token: session.token,
         expiresAt: session.expiresAt.toISOString(),
         chatbotId,
+        chatbot: {
+          id: bot.id,
+          name: bot.name,
+          theme: bot.theme ?? null,
+        },
       });
     } catch (err) {
       console.error("POST /api/chat/sessions error:", err);
