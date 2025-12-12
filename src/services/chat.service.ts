@@ -31,6 +31,20 @@ const USE_MOCK_LLM = process.env.MOCK_LLM === "1" || process.env.OFFLINE_MODE ==
 const EMBEDDING_DIMENSION = 1024;
 const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
 
+const QUERY_REWRITE_PROMPT = (question: string) =>
+  [
+    "Du bist ein Suchassistent für eine Wissensbasis.",
+    "Formuliere aus der Nutzerfrage eine präzise Suchanfrage (Keywords) für Vektor-Suche.",
+    "Regeln:",
+    "- Antworte NUR mit einer einzigen Zeile (keine Anführungszeichen, keine Aufzählung).",
+    "- Nutze 5–12 Keywords/Begriffe, inkl. Synonyme falls sinnvoll.",
+    "- Behalte Eigennamen/Domain/Produktnamen bei.",
+    "",
+    `Nutzerfrage: ${question}`,
+    "",
+    "Suchanfrage:",
+  ].join("\n");
+
 export class ChatService {
   private readonly vectorStore = getVectorStore();
   private readonly embeddings = new OpenAIEmbeddings({
@@ -40,6 +54,10 @@ export class ChatService {
   private readonly rerankModel = new ChatOpenAI({
     model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
     temperature: 0,
+  });
+  private readonly rewriteModel = new ChatOpenAI({
+    model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+    temperature: 0.2,
   });
 
   async handleMessage(session: SessionWithChatbot, content: string) {
@@ -52,17 +70,23 @@ export class ChatService {
 
     const bot = await this.getChatbot(session.chatbotId);
 
-    // Stage 1: Vector search
-    const queryVector = await this.embedSafe(content);
-    const vectorMatches = await this.vectorStore.similaritySearch({
+    // Stage 1: Vector search (mit Query-Rewrite + Relevanz-Gate)
+    const vectorMatches = await this.retrieveCandidates({
       chatbotId: session.chatbotId,
-      vector: queryVector,
-      topK: 20,
+      question: content,
     });
 
     // Stage 2: Re-rank (LLM-based fallback)
     const reranked = await this.rerank(content, vectorMatches);
     const topContexts = reranked.slice(0, 5);
+
+    // Wenn die Relevanz zu gering ist: lieber Rückfrage als generische Antwort
+    if (!topContexts.length) {
+      const answer =
+        "Können Sie bitte kurz präzisieren, worum es genau geht (z.B. Anmeldung, Kontakt, Preise oder Öffnungszeiten)? Dann können wir Ihnen gezielt weiterhelfen.";
+      await messageService.logMessage(session.id, "assistant", answer);
+      return { answer, context: [], sources: [] };
+    }
 
     const contextString = this.buildContextString(topContexts);
     const citations = this.buildCitations(topContexts);
@@ -136,14 +160,18 @@ export class ChatService {
   }) {
     const bot = await this.getChatbot(chatbotId);
 
-    const queryVector = await this.embedSafe(message);
-    const vectorMatches = await this.vectorStore.similaritySearch({
-      chatbotId,
-      vector: queryVector,
-      topK: 20,
-    });
+    const vectorMatches = await this.retrieveCandidates({ chatbotId, question: message });
     const reranked = await this.rerank(message, vectorMatches);
     const topContexts = reranked.slice(0, 5);
+
+    if (!topContexts.length) {
+      return {
+        answer:
+          "Können Sie bitte kurz präzisieren, worum es genau geht (z.B. Anmeldung, Kontakt, Preise oder Öffnungszeiten)? Dann können wir Ihnen gezielt weiterhelfen.",
+        context: [],
+        sources: [],
+      };
+    }
 
     const contextString = this.buildContextString(topContexts);
     const citations = this.buildCitations(topContexts);
@@ -193,6 +221,49 @@ export class ChatService {
       context: topContexts.map((c) => c.content),
       sources: topContexts.map((c) => ({ content: c.content, metadata: c.metadata, score: c.score })),
     };
+  }
+
+  private normalizeRelevance(score: number): number {
+    if (!Number.isFinite(score)) return 0;
+    // Memory store cosine similarity: [-1..1] -> map to [0..1]
+    if (score < 0) return Math.max(0, Math.min(1, (score + 1) / 2));
+    // Pinecone typically returns [0..1]
+    return Math.max(0, Math.min(1, score));
+  }
+
+  private async rewriteQuery(question: string): Promise<string> {
+    if (!env.RAG_ENABLE_QUERY_REWRITE) return question;
+    if (USE_MOCK_LLM || !env.OPENAI_API_KEY) return question;
+    try {
+      const res = await this.rewriteModel.invoke([{ role: "user", content: QUERY_REWRITE_PROMPT(question) }]);
+      const text = typeof res.content === "string"
+        ? res.content
+        : Array.isArray(res.content)
+          ? res.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
+          : "";
+      const rewritten = (text || "").replace(/\s+/g, " ").trim();
+      return rewritten.length >= 3 ? rewritten.slice(0, 200) : question;
+    } catch {
+      return question;
+    }
+  }
+
+  private async retrieveCandidates({ chatbotId, question }: { chatbotId: string; question: string }) {
+    const query = await this.rewriteQuery(question);
+    const queryVector = await this.embedSafe(query);
+    const vectorMatches = await this.vectorStore.similaritySearch({
+      chatbotId,
+      vector: queryVector,
+      topK: 20,
+    });
+
+    const top = vectorMatches[0];
+    const topScore = top?.score ?? 0;
+    const relevance = this.normalizeRelevance(topScore);
+    if (relevance < env.RAG_MIN_RELEVANCE) {
+      return [];
+    }
+    return vectorMatches;
   }
 
   private async rerank(query: string, docs: Array<{ id: string; content: string; metadata: Record<string, any>; score: number }>): Promise<RankedContext[]> {

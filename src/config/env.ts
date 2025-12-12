@@ -31,6 +31,8 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_COMPLETIONS_MODEL: z.string().default("gpt-4o-mini"),
   OPENAI_EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
+  RAG_ENABLE_QUERY_REWRITE: booleanString.default(true),
+  RAG_MIN_RELEVANCE: z.coerce.number().min(0).max(1).default(0.35),
   SCRAPER_DIR: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(),
   SCRAPER_APIFY_ACTOR_ID: z.string().optional(),
