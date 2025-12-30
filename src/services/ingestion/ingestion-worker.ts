@@ -720,6 +720,7 @@ export class IngestionWorker {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        console.error(`[IngestionWorker] Outbox item ${item.id} failed: ${message}`);
         const attempt = item.attemptCount + 1;
         const retryAt = new Date(Date.now() + backoffMs(attempt));
         await prisma.vectorOutbox.update({
