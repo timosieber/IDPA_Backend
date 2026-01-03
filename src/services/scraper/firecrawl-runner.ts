@@ -1,8 +1,11 @@
 import FirecrawlApp from "@mendable/firecrawl-js";
-import pdfParse from "pdf-parse";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import type { DatasetItem, DatasetPage, DatasetPdf, DatasetPdfPage, ScrapeOptions } from "./types.js";
+
+// Disable worker for Node.js environment
+GlobalWorkerOptions.workerSrc = "";
 
 // Firecrawl SDK response types
 interface FirecrawlDocument {
@@ -306,24 +309,56 @@ class FirecrawlRunner {
         return null;
       }
 
-      const buffer = Buffer.from(await response.arrayBuffer());
+      const arrayBuffer = await response.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
 
-      // Parse PDF
-      logger.info({ pdfUrl, bytes: buffer.length }, "Parsing PDF...");
-      const pdfData = await pdfParse(buffer);
+      // Parse PDF using pdfjs-dist
+      logger.info({ pdfUrl, bytes: uint8Array.length }, "Parsing PDF with pdfjs-dist...");
 
-      // Extract text page by page (pdf-parse gives us full text, we'll split it)
-      const pages = this.splitPdfTextIntoPages(pdfData.text, pdfData.numpages);
+      const loadingTask = getDocument({ data: uint8Array, useSystemFonts: true });
+      const pdfDoc = await loadingTask.promise;
+
+      // Extract text page by page
+      const pages: DatasetPdfPage[] = [];
+      let pdfTitle: string | null = null;
+
+      // Try to get title from metadata
+      try {
+        const metadata = await pdfDoc.getMetadata();
+        pdfTitle = (metadata.info as Record<string, unknown>)?.Title as string | null;
+      } catch {
+        // Metadata extraction failed, will use URL-based title
+      }
+
+      for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+        try {
+          const page = await pdfDoc.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items
+            .map((item: unknown) => {
+              const textItem = item as { str?: string };
+              return textItem.str ?? "";
+            })
+            .join(" ")
+            .trim();
+
+          if (pageText) {
+            pages.push({ page_no: pageNum, text: pageText });
+          }
+        } catch (pageError) {
+          logger.warn({ pdfUrl, pageNum, error: pageError }, "Failed to extract page");
+        }
+      }
 
       const totalWords = pages.reduce((sum, p) => sum + p.text.split(/\s+/).length, 0);
-      const avgWordsPerPage = pdfData.numpages > 0 ? totalWords / pdfData.numpages : 0;
+      const avgWordsPerPage = pdfDoc.numPages > 0 ? totalWords / pdfDoc.numPages : 0;
 
       // Quality check
       const textQuality = avgWordsPerPage >= 25 ? "ok" : "failed_quality";
 
       const elapsedMs = Date.now() - startTime;
       logger.info(
-        { pdfUrl, pages: pdfData.numpages, words: totalWords, quality: textQuality, elapsedMs },
+        { pdfUrl, pages: pdfDoc.numPages, words: totalWords, quality: textQuality, elapsedMs },
         "PDF parsed successfully"
       );
 
@@ -331,21 +366,21 @@ class FirecrawlRunner {
         type: "pdf",
         source_page: pdfUrl,
         pdf_url: pdfUrl,
-        title: pdfData.info?.Title || this.extractTitleFromUrl(pdfUrl),
+        title: pdfTitle || this.extractTitleFromUrl(pdfUrl),
         fetched_at: new Date().toISOString(),
         http_head: {
           status: response.status,
           content_type: contentType,
-          content_length: contentLength || buffer.length,
+          content_length: contentLength || uint8Array.length,
           last_modified: lastModified,
           etag: etag,
           accept_ranges: response.headers.get("accept-ranges"),
         },
         range_supported: response.headers.get("accept-ranges") === "bytes",
-        bytes_loaded: buffer.length,
+        bytes_loaded: uint8Array.length,
         pages,
         overall: {
-          page_count: pdfData.numpages,
+          page_count: pdfDoc.numPages,
           warnings: textQuality === "failed_quality" ? ["Low text density - may be scanned/image PDF"] : [],
           aborted_due_to_budget: false,
         },
@@ -386,74 +421,6 @@ class FirecrawlRunner {
         text_quality: "failed_quality",
       };
     }
-  }
-
-  /**
-   * Split full PDF text into pages (approximation since pdf-parse doesn't give page breaks)
-   * We use form feed characters if present, otherwise estimate based on page count
-   */
-  private splitPdfTextIntoPages(fullText: string, numPages: number): DatasetPdfPage[] {
-    // pdf-parse sometimes includes form feed (\f) between pages
-    const pageTexts = fullText.split(/\f/);
-
-    if (pageTexts.length === numPages) {
-      // Perfect split
-      return pageTexts.map((text, i) => ({
-        page_no: i + 1,
-        text: text.trim(),
-      }));
-    }
-
-    if (pageTexts.length > 1) {
-      // Some form feeds found, use what we have
-      return pageTexts.filter(t => t.trim()).map((text, i) => ({
-        page_no: i + 1,
-        text: text.trim(),
-      }));
-    }
-
-    // No form feeds - return as single "page" or split by estimated length
-    if (numPages <= 1 || fullText.length < 5000) {
-      return [{
-        page_no: 1,
-        text: fullText.trim(),
-      }];
-    }
-
-    // Estimate ~3000 chars per page and split accordingly
-    const charsPerPage = Math.ceil(fullText.length / numPages);
-    const pages: DatasetPdfPage[] = [];
-    let remaining = fullText;
-    let pageNo = 1;
-
-    while (remaining.length > 0 && pageNo <= numPages) {
-      // Try to split at a paragraph boundary
-      let splitPoint = charsPerPage;
-      if (splitPoint < remaining.length) {
-        const paragraphBreak = remaining.lastIndexOf("\n\n", splitPoint + 500);
-        if (paragraphBreak > splitPoint - 500) {
-          splitPoint = paragraphBreak + 2;
-        }
-      }
-
-      const pageText = remaining.slice(0, splitPoint).trim();
-      if (pageText) {
-        pages.push({ page_no: pageNo, text: pageText });
-      }
-
-      remaining = remaining.slice(splitPoint);
-      pageNo++;
-    }
-
-    // Add any remaining text to the last page
-    if (remaining.trim() && pages.length > 0) {
-      const lastPage = pages[pages.length - 1];
-      if (lastPage) {
-        lastPage.text += "\n\n" + remaining.trim();
-      }
-    }
-
-    return pages;
   }
 
   private extractTitleFromUrl(url: string): string {

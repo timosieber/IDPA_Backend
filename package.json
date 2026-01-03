@@ -38,7 +38,7 @@
     "nanoid": "^5.1.6",
     "node-appwrite": "^20.3.0",
     "openai": "^6.9.1",
-    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^4.0.379",
     "pino": "^10.1.0",
     "undici": "^7.16.0",
     "uuid": "^13.0.0",
