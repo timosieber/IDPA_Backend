@@ -221,8 +221,14 @@ class FirecrawlRunner {
 
       const crawlResponse = await client.crawl(url, crawlOpts as any) as unknown as FirecrawlCrawlStatusResponse;
 
+      // Debug: Log full response to see what Firecrawl returns
+      logger.info(
+        { url, response: JSON.stringify(crawlResponse).slice(0, 1000) },
+        "Firecrawl crawl raw response"
+      );
+
       if (!crawlResponse.success || !crawlResponse.data) {
-        logger.warn({ url, status: crawlResponse.status }, "Firecrawl crawl unsuccessful");
+        logger.warn({ url, status: crawlResponse.status, response: crawlResponse }, "Firecrawl crawl unsuccessful");
         return results;
       }
 
