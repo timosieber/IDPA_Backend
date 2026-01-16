@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 
@@ -62,27 +62,12 @@ class VoiceService {
       "Preparing audio for transcription"
     );
 
-    // Convert Buffer to ArrayBuffer for File constructor compatibility
-    const arrayBuffer = audioBuffer.buffer.slice(
-      audioBuffer.byteOffset,
-      audioBuffer.byteOffset + audioBuffer.byteLength
-    ) as ArrayBuffer;
-
-    // Use a supported mime type for the File object
-    const supportedMimeTypes: Record<string, string> = {
-      webm: "audio/webm",
-      mp3: "audio/mpeg",
-      mp4: "audio/mp4",
-      m4a: "audio/m4a",
-      wav: "audio/wav",
-      ogg: "audio/ogg",
-      oga: "audio/ogg",
-      flac: "audio/flac",
-    };
-    const fileMimeType = supportedMimeTypes[ext] || "audio/webm";
-    const file = new File([arrayBuffer], `audio.${ext}`, { type: fileMimeType });
-
     try {
+      // Use OpenAI's toFile helper for proper file handling
+      const file = await toFile(audioBuffer, `audio.${ext}`, {
+        type: ext === "webm" ? "audio/webm" : `audio/${ext}`,
+      });
+
       const response = await this.client.audio.transcriptions.create({
         file,
         model: env.OPENAI_WHISPER_MODEL,
