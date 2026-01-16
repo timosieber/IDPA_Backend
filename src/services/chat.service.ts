@@ -140,8 +140,11 @@ function detectSmallTalk(message: string): SmallTalkType | null {
   return null;
 }
 
-const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) =>
-  [
+const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) => {
+  // Check if the question contains pronouns or references that need context
+  const needsContext = conversationContext && /\b(das|es|davon|dafür|dabei|damit|diese[rms]?|jene[rms]?|welche[rms]?|kosten?|preis|wie\s*viel)\b/i.test(question);
+
+  return [
     "Du bist ein Suchassistent für eine Wissensbasis.",
     "Formuliere aus der Nutzerfrage eine präzise Suchanfrage (Keywords) für Vektor-Suche.",
     "",
@@ -149,19 +152,25 @@ const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) =>
     "- Antworte NUR mit einer einzigen Zeile (keine Anführungszeichen, keine Aufzählung).",
     "- Nutze 5–12 Keywords/Begriffe, inkl. Synonyme falls sinnvoll.",
     "- Behalte Eigennamen/Domain/Produktnamen bei.",
-    "- WICHTIG: Wenn die Frage sich auf vorherige Themen bezieht (z.B. 'das', 'es', 'davon'), beziehe den Kontext ein!",
-    "",
-    ...(conversationContext
+    ...(needsContext
       ? [
-          "Vorheriger Konversationskontext (letzte Themen):",
-          conversationContext,
           "",
+          "KRITISCH - KONTEXT BEACHTEN:",
+          "Die aktuelle Frage bezieht sich auf ein vorheriges Thema!",
+          "Du MUSST das Hauptthema aus dem Kontext in deine Suchanfrage einbeziehen.",
+          "Beispiel: Wenn vorher über 'Coaching' gesprochen wurde und jetzt 'Was kostet das?' gefragt wird,",
+          "dann muss deine Suchanfrage 'Coaching Kosten Preis' enthalten, NICHT generische Preise.",
+          "",
+          "Konversationskontext:",
+          conversationContext,
         ]
       : []),
+    "",
     `Aktuelle Nutzerfrage: ${question}`,
     "",
     "Suchanfrage:",
   ].join("\n");
+};
 
 export class ChatService {
   private readonly vectorStore = getVectorStore();
