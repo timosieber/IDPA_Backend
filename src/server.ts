@@ -70,26 +70,6 @@ export const buildServer = (): Express => {
     }),
   );
 
-  // TEMPORARY: Trigger scrape without auth (remove after use!)
-  app.post("/api/admin/rescrape/:chatbotId", async (req, res) => {
-    const secret = req.headers["x-admin-secret"];
-    if (secret !== "temp-rescrape-2024") {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-    try {
-      const { chatbotId } = req.params;
-      const { url, maxDepth, maxPages } = req.body;
-      const { jobId } = await knowledgeService.startScrapeIngestion(chatbotId, {
-        startUrls: [url || "https://www.maximumm.ch"],
-        maxDepth: maxDepth ?? 3,
-        maxPages: maxPages ?? 300,
-      });
-      res.json({ status: "PENDING", jobId, chatbotId });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
   app.use("/api", apiRateLimiter);
 
   // Voice routes (with own rate limiting, no JSON body parsing needed)
