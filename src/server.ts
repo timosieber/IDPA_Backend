@@ -88,17 +88,20 @@ export const buildServer = (): Express => {
     }
   });
 
-  // Trigger rescrape
-  app.post("/api/debug/rescrape/:chatbotId", async (req, res) => {
+  // Add text source
+  app.post("/api/debug/add-text/:chatbotId", async (req, res) => {
     const secret = req.headers["x-admin-secret"];
     if (secret !== "temp-2024-rescrape") return res.status(401).json({ error: "Unauthorized" });
     try {
-      const { jobId } = await knowledgeService.startScrapeIngestion(req.params.chatbotId, {
-        startUrls: [req.body.url || "https://www.maximumm.ch"],
-        maxDepth: req.body.maxDepth ?? 3,
-        maxPages: req.body.maxPages ?? 300,
-      });
-      res.json({ status: "PENDING", jobId });
+      const { title, content, canonicalUrl } = req.body;
+      const { jobId, knowledgeSourceId } = await knowledgeService.startTextIngestion(
+        "system-admin",
+        req.params.chatbotId,
+        title,
+        content,
+        { canonicalUrl }
+      );
+      res.json({ status: "PENDING", jobId, knowledgeSourceId });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
