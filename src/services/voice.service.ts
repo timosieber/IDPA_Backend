@@ -1,4 +1,5 @@
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
+import { Readable } from "stream";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 
@@ -128,10 +129,10 @@ class VoiceService {
     }
 
     try {
-      // Use OpenAI's toFile helper for proper file handling
-      const file = await toFile(audioBuffer, `audio.${ext}`, {
-        type: actualMime,
-      });
+      // Create a File-like object using Uint8Array to ensure compatibility
+      const uint8Array = new Uint8Array(audioBuffer);
+      const blob = new Blob([uint8Array], { type: actualMime });
+      const file = new File([blob], `audio.${ext}`, { type: actualMime });
 
       const response = await this.client.audio.transcriptions.create({
         file,
