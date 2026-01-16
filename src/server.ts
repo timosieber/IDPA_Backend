@@ -74,9 +74,10 @@ export const buildServer = (): Express => {
   app.get("/api/debug/job-status/:jobId", async (req, res) => {
     try {
       const job = await prisma.ingestionJob.findUnique({ where: { id: req.params.jobId } });
-      const sourceCount = await prisma.knowledgeSource.count({ where: { chatbotId: job?.chatbotId } });
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      const sourceCount = await prisma.knowledgeSource.count({ where: { chatbotId: job.chatbotId } });
       const pdfSources = await prisma.knowledgeSource.findMany({
-        where: { chatbotId: job?.chatbotId },
+        where: { chatbotId: job.chatbotId },
         select: { label: true, canonicalUrl: true, type: true, status: true },
         orderBy: { createdAt: "desc" },
         take: 20,
