@@ -20,9 +20,14 @@ import { randomUUID } from "node:crypto";
 const LOCALHOST_PORTS = ["3000", "4200", "5173", "8080"];
 const DEFAULT_CHATBOT_ID = "default-bot";
 
+// Widget-Pfade die von jeder Domain erreichbar sein müssen (öffentliche Endpoints)
+const WIDGET_PATH_PREFIXES = ["/api/chat/sessions", "/api/chat/messages", "/api/chat", "/api/voice"];
+
+const isWidgetPath = (path: string) => WIDGET_PATH_PREFIXES.some((p) => path.startsWith(p));
+
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Erlaube Requests ohne Origin (z.B. Server-to-Server, Postman)
+    // Erlaube Requests ohne Origin (z.B. Server-to-Server, Postman, Railway-interner Proxy)
     if (!origin) return callback(null, true);
 
     const isLocalhost = LOCALHOST_PORTS.some(
@@ -30,14 +35,16 @@ const corsOptions = {
     );
     const isAllowedEnv = env.CORS_ALLOWED_ORIGINS_LIST.length
       ? env.CORS_ALLOWED_ORIGINS_LIST.includes(origin)
-      : false; // Default: nicht erlaubt, wenn keine Origins konfiguriert
+      : false;
 
     if (isLocalhost || isAllowedEnv) {
       return callback(null, true);
     }
 
-    // Origin nicht erlaubt
-    return callback(new Error(`Origin ${origin} nicht erlaubt durch CORS`), false);
+    // Widget-Endpoints sind für alle Origins offen (Rate-Limiting schützt sie)
+    // Der eigentliche Origin-Check passiert hier nicht — er wird per-route entschieden.
+    // Wir erlauben hier alle Origins und verlassen uns auf Auth-Middleware für Admin-Routen.
+    return callback(null, true);
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -51,7 +58,13 @@ export const buildServer = (): Express => {
   ingestionWorker.start();
 
   app.set("trust proxy", 1);
-  app.use(helmet());
+  app.use(helmet({
+    // Erlaube Einbettung in iframes auf beliebigen Domains (Widget)
+    frameguard: false,
+    contentSecurityPolicy: false,
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    crossOriginOpenerPolicy: false,
+  }));
   app.use(cors(corsOptions));
   app.use(express.json({ limit: "1mb" }));
   app.use(morgan(env.NODE_ENV === "production" ? "combined" : "dev"));
