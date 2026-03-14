@@ -1,11 +1,15 @@
+import { createRequire } from "node:module";
+import path from "node:path";
 import FirecrawlApp from "@mendable/firecrawl-js";
 import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
 import type { DatasetItem, DatasetPage, DatasetPdf, DatasetPdfPage, ScrapeOptions } from "./types.js";
 
-// Disable worker for Node.js environment
-GlobalWorkerOptions.workerSrc = "";
+// Point pdfjs-dist to its worker file so PDF parsing works in Node.js
+const require = createRequire(import.meta.url);
+const pdfjsDistPath = path.dirname(require.resolve("pdfjs-dist/package.json"));
+GlobalWorkerOptions.workerSrc = path.join(pdfjsDistPath, "build", "pdf.worker.mjs");
 
 // Firecrawl SDK response types
 interface FirecrawlDocument {
