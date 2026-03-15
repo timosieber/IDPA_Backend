@@ -331,6 +331,8 @@ const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) =>
     "- Nutze 5–12 Keywords/Begriffe, inkl. Synonyme falls sinnvoll.",
     "- Behalte Eigennamen/Domain/Produktnamen bei.",
     "- Wenn nach einem spezifischen Bereich (z.B. BM) gefragt wird, suche NUR nach diesem Bereich, NICHT nach allgemeinen Bildungsplänen einzelner Berufe.",
+    "- Bei BM-Lehrmittel-Fragen füge auch die Kürzel hinzu: BM2_TE (BM2 Technik), BM2_WI (BM2 Wirtschaft), BM1_TE, BM1_WI, TEV (Vollzeit), TET (Teilzeit).",
+    "- Beispiel: 'BM2 Technik Lehrmittel' → 'Berufsmaturität BM2 Technik Lehrmittel Material BM2_TE BM2_TEV BM2_TET Bücher'",
     ...(needsContext
       ? [
           "",
