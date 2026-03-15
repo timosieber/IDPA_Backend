@@ -847,7 +847,7 @@ export class ChatService {
       "",
       "ANTWORT-STIL:",
       "- Antworte freundlich und professionell.",
-      "- Fasse mehrere Quellen zu EINER zusammenhängenden Antwort zusammen.",
+      "- Fasse mehrere Quellen zu EINER zusammenhängenden Antwort zusammen. Vermische aber NICHT widersprüchliche Informationen aus verschiedenen Varianten (z.B. Vollzeit vs. Teilzeit) in einem Satz — trenne sie klar.",
       "- Vermeide: 'Laut Quelle X...' oder 'Der Text sagt...'.",
       "- Stattdessen: Erkläre die Information direkt und natürlich.",
       "- Bei mehreren relevanten Punkten: Strukturiere die Antwort logisch.",
