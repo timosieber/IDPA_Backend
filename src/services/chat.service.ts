@@ -78,8 +78,8 @@ const ragJsonAnswerSchema = z
 
 // Fallback message nur als letzte Reserve (wird normalerweise durch KI-generierte Antwort ersetzt)
 const UNKNOWN_MESSAGES = {
-  insufficient_context: "Dazu kann ich Ihnen leider keine Auskunft geben. Kann ich Ihnen bei etwas anderem helfen?",
-  off_topic: "Dazu kann ich Ihnen leider nicht weiterhelfen. Kann ich Ihnen bei etwas anderem behilflich sein?",
+  insufficient_context: "Dazu kann ich Ihnen leider keine Auskunft geben. Wenden Sie sich bitte an das Sekretariat für weitere Informationen.",
+  off_topic: "Dazu kann ich Ihnen leider nicht weiterhelfen. Wenden Sie sich bitte an das Sekretariat für weitere Informationen.",
 } as const;
 
 // Kontaktinformation wird dynamisch aus der Chatbot-Konfiguration geladen
@@ -107,6 +107,7 @@ Deine Aufgabe:
 1. ZEIGE VERSTÄNDNIS für die Frage (z.B. "Das ist eine interessante Frage zum Wetter" oder "Ich verstehe, dass Sie sich dafür interessieren")
 2. Erkläre freundlich, dass du dazu LEIDER keine Auskunft geben kannst
 3. BIETE KONKRET AN, wobei du helfen kannst: Informationen über ${botName} und dessen Angebote/Dienstleistungen
+4. Verweise den Kunden an das Sekretariat für weiterführende Fragen (Telefon: 032 627 78 04)
 
 BEISPIELE für gute Antworten:
 - "Das Wetter ist tatsächlich ein spannendes Thema! Leider kann ich Ihnen dazu keine Auskunft geben. Ich kann Ihnen aber gerne bei Fragen zu unseren Angeboten weiterhelfen."
@@ -470,6 +471,7 @@ export class ChatService {
           contextTruncated,
           hydratedContexts: topContexts,
           claims: validated.data.claims,
+          contactFallback: buildContactFallback(bot),
         })
       : this.buildUnknownResponse({
           debugId,
@@ -802,6 +804,8 @@ export class ChatService {
     };
 
     return [
+      `Heutiges Datum: ${new Date().toLocaleDateString("de-CH")}`,
+      "",
       "Du erhältst eine Nutzerfrage und Kontext-Chunks aus einer Wissensdatenbank.",
       "",
       "DEINE AUFGABE:",
@@ -818,6 +822,7 @@ export class ChatService {
       "6. Jeder Claim MUSS mindestens einen supporting_chunk_id haben.",
       "7. supporting_chunk_ids dürfen NUR aus dieser Whitelist stammen:",
       JSON.stringify(args.allowedChunkIds),
+      "8. ANTI-HALLUZINATION: Setze unknown=true wenn der Kontext zwar thematisch verwandt ist, aber die SPEZIFISCHE Frage nicht direkt beantwortet. Beispiel: Ein Bildungsplan-Dokument beantwortet NICHT die Frage ob man ein Diplom beglaubigen lassen kann.",
       "",
       "LINKS UND DOKUMENTE (SEHR WICHTIG):",
       "- Jeder Kontext-Chunk hat eine 'URL:' Zeile. Wenn die URL auf ein Dokument (.pdf) oder eine relevante Seite zeigt, MUSST du diese URL in deine Antwort einbauen.",
@@ -939,7 +944,7 @@ export class ChatService {
     return sources;
   }
 
-  private buildUnknownResponse(args: { debugId: string; reason: string; contextTruncated?: boolean; contactFallback?: string }): RagResponse {
+  private buildUnknownResponse(args: { debugId: string; reason: string; contextTruncated?: boolean | undefined; contactFallback?: string | undefined }): RagResponse {
     // Füge Fallback-Kontaktinformation zur Fehlermeldung hinzu (falls vorhanden)
     const reasonWithContact = args.reason + (args.contactFallback || "");
 
@@ -958,12 +963,14 @@ export class ChatService {
     contextTruncated: boolean;
     hydratedContexts: RankedContext[];
     claims: RagClaim[];
+    contactFallback?: string;
   }): RagResponse {
     if (args.claims.length < env.RAG_MIN_SUPPORTED_CLAIMS) {
       return this.buildUnknownResponse({
         debugId: args.debugId,
         reason: UNKNOWN_MESSAGES.insufficient_context,
         contextTruncated: args.contextTruncated,
+        contactFallback: args.contactFallback,
       });
     }
 
@@ -978,6 +985,7 @@ export class ChatService {
         debugId: args.debugId,
         reason: UNKNOWN_MESSAGES.off_topic,
         contextTruncated: args.contextTruncated,
+        contactFallback: args.contactFallback,
       });
     }
 

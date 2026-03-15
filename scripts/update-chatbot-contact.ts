@@ -12,11 +12,11 @@ const prisma = new PrismaClient();
 
 const CHATBOT_ID = "cmku3lyc50003t3015w6l8fzp";
 
-// Chatbot Studio Kontaktdaten
+// BBZ Solothurn-Grenchen Kontaktdaten
 const CONTACT_INFO = {
-  contactEmail: "timo.sieber@bbzsogr.ch",
-  // contactPhone: null,  // Keine Telefonnummer verfügbar
-  // contactUrl: null,    // Keine Kontakt-URL verfügbar
+  contactPhone: "032 627 78 04",
+  contactEmail: "info@bbzsogr.ch",
+  contactUrl: "https://bbzsogr.so.ch",
 };
 
 async function main() {
