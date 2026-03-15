@@ -822,7 +822,7 @@ export class ChatService {
       "6. Jeder Claim MUSS mindestens einen supporting_chunk_id haben.",
       "7. supporting_chunk_ids dürfen NUR aus dieser Whitelist stammen:",
       JSON.stringify(args.allowedChunkIds),
-      "8. ANTI-HALLUZINATION: Setze unknown=true wenn der Kontext zwar thematisch verwandt ist, aber die SPEZIFISCHE Frage nicht direkt beantwortet. Beispiel: Ein Bildungsplan-Dokument beantwortet NICHT die Frage ob man ein Diplom beglaubigen lassen kann.",
+      "8. ANTI-HALLUZINATION: Setze unknown=true NUR wenn die Frage eine spezifische Dienstleistung oder Aktion betrifft, die im Kontext NICHT erwähnt wird (z.B. 'Diplom beglaubigen'). Wenn der Kontext allgemeine Informationen enthält die zur Frage passen (z.B. Berufslisten, Angebote, Kontaktdaten), dann beantworte die Frage.",
       "",
       "LINKS UND DOKUMENTE (SEHR WICHTIG):",
       "- Jeder Kontext-Chunk hat eine 'URL:' Zeile. Wenn die URL auf ein Dokument (.pdf) oder eine relevante Seite zeigt, MUSST du diese URL in deine Antwort einbauen.",
