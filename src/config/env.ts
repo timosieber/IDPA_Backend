@@ -33,7 +33,7 @@ const envSchema = z.object({
   OPENAI_EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
   EMBEDDINGS_PROVIDER: z.enum(["openai", "deterministic_test"]).default("openai"),
   RAG_ENABLE_QUERY_REWRITE: booleanString.default(true),
-  RAG_MIN_RELEVANCE: z.coerce.number().min(0).max(1).default(0.45),
+  RAG_MIN_RELEVANCE: z.coerce.number().min(0).max(1).default(0.38),
   RAG_DETERMINISTIC_LLM: booleanString.default(true),
   RAG_MIN_HYDRATED_CHUNKS: z.coerce.number().int().min(0).max(50).default(1),
   RAG_MIN_SUPPORTED_CLAIMS: z.coerce.number().int().min(0).max(50).default(1),
