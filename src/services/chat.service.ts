@@ -852,6 +852,7 @@ export class ChatService {
       "- Stattdessen: Erkläre die Information direkt und natürlich.",
       "- Bei mehreren relevanten Punkten: Strukturiere die Antwort logisch.",
       "- Baue relevante Links direkt in den Antworttext ein, nicht erst am Ende.",
+      "- WICHTIG bei mehrdeutigen Fragen: Wenn die Frage verschiedene Optionen betrifft (z.B. 'Was brauche ich in der BM?'), gib ZUERST einen Überblick über die verfügbaren Varianten/Typen (z.B. BM1 lehrbegleitend, BM2 nach der Lehre, Richtungen wie Technik oder Wirtschaft) und frage nach, welche Option gemeint ist. Tauche NICHT direkt in spezifische Details eines einzelnen Typs ein.",
       "",
       "Schema (Beispiele):",
       JSON.stringify(schemaExample, null, 2),
