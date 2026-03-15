@@ -308,13 +308,22 @@ const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) =>
   const needsContext = conversationContext && /\b(das|es|davon|dafür|dabei|damit|diese[rms]?|jene[rms]?|welche[rms]?|kosten?|preis|wie\s*viel)\b/i.test(question);
 
   return [
-    "Du bist ein Suchassistent für eine Wissensbasis.",
+    "Du bist ein Suchassistent für eine Wissensbasis einer Berufsschule (BBZ Solothurn-Grenchen).",
     "Formuliere aus der Nutzerfrage eine präzise Suchanfrage (Keywords) für Vektor-Suche.",
+    "",
+    "WICHTIGE ABKÜRZUNGEN (immer auflösen):",
+    "- BM, BM1, BM2 = Berufsmaturität (NICHT ein spezifischer Beruf!)",
+    "- EFZ = Eidgenössisches Fähigkeitszeugnis",
+    "- EBA = Eidgenössisches Berufsattest",
+    "- KBS = Kaufmännische Berufsfachschule",
+    "- GIBS = Gewerblich-Industrielle Berufsfachschule",
+    "- BBZ = Berufsbildungszentrum Solothurn-Grenchen",
     "",
     "Regeln:",
     "- Antworte NUR mit einer einzigen Zeile (keine Anführungszeichen, keine Aufzählung).",
     "- Nutze 5–12 Keywords/Begriffe, inkl. Synonyme falls sinnvoll.",
     "- Behalte Eigennamen/Domain/Produktnamen bei.",
+    "- Wenn nach einem spezifischen Bereich (z.B. BM) gefragt wird, suche NUR nach diesem Bereich, NICHT nach allgemeinen Bildungsplänen einzelner Berufe.",
     ...(needsContext
       ? [
           "",
@@ -822,7 +831,10 @@ export class ChatService {
       "6. Jeder Claim MUSS mindestens einen supporting_chunk_id haben.",
       "7. supporting_chunk_ids dürfen NUR aus dieser Whitelist stammen:",
       JSON.stringify(args.allowedChunkIds),
-      "8. ANTI-HALLUZINATION: Setze unknown=true NUR wenn die Frage eine spezifische Dienstleistung oder Aktion betrifft, die im Kontext NICHT erwähnt wird (z.B. 'Diplom beglaubigen'). Wenn der Kontext allgemeine Informationen enthält die zur Frage passen (z.B. Berufslisten, Angebote, Kontaktdaten), dann beantworte die Frage.",
+      "8. ANTI-HALLUZINATION: Setze unknown=true wenn der Kontext die spezifische Frage nicht beantwortet. Beispiele:",
+      "   - Ein Bildungsplan für Sanitärinstallateur beantwortet NICHT eine Frage über Berufsmaturität (BM).",
+      "   - Ein Dokument über Schutzausrüstung beantwortet NICHT eine Frage über BM-Lehrmittel/Bücher.",
+      "   - Verwende Chunks NUR wenn sie thematisch EXAKT zur Frage passen, nicht nur oberflächlich verwandt sind.",
       "",
       "LINKS UND DOKUMENTE (SEHR WICHTIG):",
       "- Jeder Kontext-Chunk hat eine 'URL:' Zeile. Wenn die URL auf ein Dokument (.pdf) oder eine relevante Seite zeigt, MUSST du diese URL in deine Antwort einbauen.",
