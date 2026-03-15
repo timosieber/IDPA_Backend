@@ -853,7 +853,7 @@ export class ChatService {
       "   - Wenn die Frage eine SPEZIFISCHE Richtung nennt (z.B. 'BM2 Technik'), verwende NUR Chunks die zu dieser Richtung passen!",
       "   - Ein BM2-Wirtschaft-Dokument beantwortet NICHT eine Frage über BM2-Technik-Lehrmittel!",
       "   - Achte auf URL-Hinweise: 'BM2_TE' = Technik, 'BM2_WI' oder 'Wirtschaft' = Wirtschaft.",
-      "   - Wenn kein passender Chunk für die gefragte Richtung vorhanden ist, setze unknown=true.",
+      "   - Wenn kein passender Chunk für die gefragte Richtung vorhanden ist, aber Chunks für ANDERE Richtungen existieren, weise darauf hin dass du nur Infos zur anderen Richtung hast und verlinke die allgemeine BM-Seite.",
       "",
       "LINKS UND DOKUMENTE (SEHR WICHTIG):",
       "- Jeder Kontext-Chunk hat eine 'URL:' Zeile. Wenn die URL auf ein Dokument (.pdf) oder eine relevante Seite zeigt, MUSST du diese URL in deine Antwort einbauen.",
