@@ -82,6 +82,31 @@ const UNKNOWN_MESSAGES = {
   off_topic: "Dazu kann ich Ihnen leider nicht weiterhelfen. Wenden Sie sich bitte an das Sekretariat für weitere Informationen.",
 } as const;
 
+// Prompt für Rückfrage bei knappem Relevanz-Score (z.B. Tippfehler)
+const CLARIFY_INTENT_PROMPT = (question: string, botName: string, botDescription?: string | null) => `Du bist ein freundlicher Kundenservice-Assistent für ${botName}.
+${botDescription ? `Über das Unternehmen: ${botDescription}` : ""}
+
+Ein Kunde hat folgende Frage gestellt: "${question}"
+
+Die Frage ist UNKLAR oder enthält möglicherweise Tippfehler, sodass ich nicht sicher bin, was gemeint ist.
+Aber das Thema KÖNNTE zu unserem Wissensbereich gehören.
+
+Deine Aufgabe:
+1. Versuche zu ERRATEN, was der Kunde wahrscheinlich meint
+2. Formuliere eine freundliche Rückfrage im Stil: "Meinten Sie vielleicht ...?"
+3. Biete 1-2 konkrete Vorschläge an, die zum Angebot von ${botName} passen könnten
+4. Halte die Antwort kurz (max 2-3 Sätze)
+
+BEISPIELE:
+- Frage: "was kosted di bm2 technik" → "Meinten Sie vielleicht die Kosten für die BM2 Technik Ausbildung? Fragen Sie gerne nochmal, ich helfe Ihnen gerne weiter! 😊"
+- Frage: "infomatiker lere" → "Meinten Sie die Informatiker-Lehre (EFZ)? Stellen Sie Ihre Frage gerne nochmals, dann kann ich Ihnen weiterhelfen!"
+
+WICHTIG:
+- Antworte in der Sprache der Frage
+- Klingt natürlich und freundlich
+- Maximal 2-3 Sätze
+- Beantworte die Frage NICHT inhaltlich, frage nur nach`;
+
 // Kontaktinformation wird dynamisch aus der Chatbot-Konfiguration geladen
 // Falls keine Kontaktinfo konfiguriert ist, wird kein Fallback angezeigt
 function buildContactFallback(bot: { contactEmail?: string | null; contactPhone?: string | null; contactUrl?: string | null }): string {
@@ -303,36 +328,27 @@ function detectSmallTalk(message: string): SmallTalkType | null {
   return null;
 }
 
-const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) => {
+const QUERY_REWRITE_PROMPT = (question: string, bot: { name: string; description?: string | null; systemPrompt?: string | null }, conversationContext?: string) => {
   // Check if the question contains pronouns or references that need context
   const needsContext = conversationContext && /\b(das|es|davon|dafür|dabei|damit|diese[rms]?|jene[rms]?|welche[rms]?|kosten?|preis|wie\s*viel)\b/i.test(question);
 
   return [
-    "Du bist ein Suchassistent für eine Wissensbasis einer Berufsschule (BBZ Solothurn-Grenchen).",
+    `Du bist ein Suchassistent für die Wissensbasis von "${bot.name}".`,
+    bot.description ? `Über das Unternehmen: ${bot.description}` : "",
     "Formuliere aus der Nutzerfrage eine präzise Suchanfrage (Keywords) für Vektor-Suche.",
     "",
-    "WICHTIGE ABKÜRZUNGEN (immer auflösen):",
-    "- BM, BM1, BM2 = Berufsmaturität (NICHT ein spezifischer Beruf!)",
-    "- EFZ = Eidgenössisches Fähigkeitszeugnis",
-    "- EBA = Eidgenössisches Berufsattest",
-    "- KBS = Kaufmännische Berufsfachschule",
-    "- GIBS = Gewerblich-Industrielle Berufsfachschule",
-    "- BBZ = Berufsbildungszentrum Solothurn-Grenchen",
-    "",
-    "SCHWEIZER BILDUNGSSYSTEM — Grundbildung vs. Weiterbildung:",
-    "- GRUNDBILDUNG (Lehre) = EFZ/EBA-Ausbildungen: KV, Detailhandel, Schreiner, Informatiker, etc.",
-    "- WEITERBILDUNG = Angebote NACH der Grundbildung: BM2, Höhere Fachschule, Kurse, Nachdiplom",
-    "- BM1 = lehrbegleitend (gehört zur Grundbildung)",
-    "- BM2 = nach der Lehre (gehört zur Weiterbildung)",
-    "- Wenn nach 'Weiterbildung' gefragt wird, suche nach: BM2, Höhere Fachschule, Weiterbildungskurse — NICHT nach Grundbildung/Lehre!",
-    "",
+    ...(bot.systemPrompt
+      ? [
+          "BOT-SPEZIFISCHER KONTEXT (nutze diesen für domainspezifische Abkürzungen und Fachbegriffe):",
+          bot.systemPrompt,
+          "",
+        ]
+      : []),
     "Regeln:",
+    "- KORRIGIERE zuerst Tippfehler, Grammatikfehler und schlechtes Deutsch/Englisch/Französisch bevor du Keywords generierst.",
     "- Antworte NUR mit einer einzigen Zeile (keine Anführungszeichen, keine Aufzählung).",
     "- Nutze 5–12 Keywords/Begriffe, inkl. Synonyme falls sinnvoll.",
     "- Behalte Eigennamen/Domain/Produktnamen bei.",
-    "- Wenn nach einem spezifischen Bereich (z.B. BM) gefragt wird, suche NUR nach diesem Bereich, NICHT nach allgemeinen Bildungsplänen einzelner Berufe.",
-    "- Bei BM-Lehrmittel-Fragen füge auch die Kürzel hinzu: BM2_TE (BM2 Technik), BM2_WI (BM2 Wirtschaft), BM1_TE, BM1_WI, TEV (Vollzeit), TET (Teilzeit).",
-    "- Beispiel: 'BM2 Technik Lehrmittel' → 'Berufsmaturität BM2 Technik Lehrmittel Material BM2_TE BM2_TEV BM2_TET Bücher'",
     ...(needsContext
       ? [
           "",
@@ -404,9 +420,10 @@ export class ChatService {
     const conversationContext = this.buildConversationContext(history);
 
     // Stage 1: Vector search (mit Query-Rewrite + Relevanz-Gate)
-    const vectorMatches = await this.retrieveCandidates({
+    const { matches: vectorMatches, topRelevance } = await this.retrieveCandidates({
       chatbotId: session.chatbotId,
       question: content,
+      bot,
       conversationContext,
     });
 
@@ -417,9 +434,25 @@ export class ChatService {
     const debugId = randomUUID();
     const hardGate = this.applyHardGate({ hydrated: topContexts.length });
     if (!topContexts.length || !hardGate.allowed) {
-      // Generate a natural, question-specific rejection using LLM
-      const naturalResponse = await this.generateOffTopicResponse(content, bot.name || "unser Unternehmen", bot.description);
       const contactFallback = buildContactFallback(bot);
+
+      // Soft-Gate: Score knapp unter Threshold → "Meinten Sie...?" nachfragen
+      if (topRelevance >= env.RAG_SOFT_RELEVANCE) {
+        const clarifyResponse = await this.generateClarifyIntentResponse(content, bot.name || "unser Unternehmen", bot.description);
+        const result: RagResponse = {
+          claims: [{ text: clarifyResponse, supporting_chunk_ids: [] }],
+          unknown: false,
+          debug_id: debugId,
+          context_truncated: false,
+          sources: [],
+        };
+        await messageService.logMessage(session.id, "assistant", JSON.stringify(result));
+        logger.info({ debugId, message: content, topRelevance }, "Borderline relevance, asking for clarification");
+        return result;
+      }
+
+      // Hard-Gate: Score weit darunter → off-topic Ablehnung
+      const naturalResponse = await this.generateOffTopicResponse(content, bot.name || "unser Unternehmen", bot.description);
       const result: RagResponse = {
         claims: [{ text: naturalResponse + contactFallback, supporting_chunk_ids: [] }],
         unknown: true,
@@ -429,7 +462,7 @@ export class ChatService {
         sources: [],
       };
       await messageService.logMessage(session.id, "assistant", JSON.stringify(result));
-      logger.info({ debugId, message: content }, "Off-topic question, returning natural rejection");
+      logger.info({ debugId, message: content, topRelevance }, "Off-topic question, returning natural rejection");
       return result;
     }
 
@@ -539,17 +572,31 @@ export class ChatService {
 
     const bot = await this.getChatbot(chatbotId);
 
-    const vectorMatches = await this.retrieveCandidates({ chatbotId, question: message });
+    const { matches: vectorMatches, topRelevance } = await this.retrieveCandidates({ chatbotId, question: message, bot });
     const reranked = await this.rerank(message, vectorMatches);
     const topContexts = reranked.slice(0, 5);
 
     const debugId = randomUUID();
     const hardGate = this.applyHardGate({ hydrated: topContexts.length });
     if (!topContexts.length || !hardGate.allowed) {
-      // Generate a natural, question-specific rejection using LLM
-      const naturalResponse = await this.generateOffTopicResponse(message, bot.name || "unser Unternehmen", bot.description);
       const contactFallback = buildContactFallback(bot);
-      logger.info({ debugId, message }, "Off-topic question, returning natural rejection");
+
+      // Soft-Gate: Score knapp unter Threshold → "Meinten Sie...?" nachfragen
+      if (topRelevance >= env.RAG_SOFT_RELEVANCE) {
+        const clarifyResponse = await this.generateClarifyIntentResponse(message, bot.name || "unser Unternehmen", bot.description);
+        logger.info({ debugId, message, topRelevance }, "Borderline relevance, asking for clarification");
+        return {
+          claims: [{ text: clarifyResponse, supporting_chunk_ids: [] }],
+          unknown: false,
+          debug_id: debugId,
+          context_truncated: false,
+          sources: [],
+        };
+      }
+
+      // Hard-Gate: Score weit darunter → off-topic Ablehnung
+      const naturalResponse = await this.generateOffTopicResponse(message, bot.name || "unser Unternehmen", bot.description);
+      logger.info({ debugId, message, topRelevance }, "Off-topic question, returning natural rejection");
       return {
         claims: [{ text: naturalResponse + contactFallback, supporting_chunk_ids: [] }],
         unknown: true,
@@ -626,14 +673,14 @@ export class ChatService {
     return Math.max(0, Math.min(1, score));
   }
 
-  private async rewriteQuery(question: string, conversationContext?: string): Promise<string> {
+  private async rewriteQuery(question: string, bot: { name: string; description?: string | null; systemPrompt?: string | null }, conversationContext?: string): Promise<string> {
     if (!env.RAG_ENABLE_QUERY_REWRITE) return question;
     try {
       // Call OpenAI Chat Completions API for query rewriting
       const completion = await this.client.chat.completions.create({
         model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
         temperature: this.deterministic ? 0 : 0.2,
-        messages: [{ role: "user", content: QUERY_REWRITE_PROMPT(question, conversationContext) }],
+        messages: [{ role: "user", content: QUERY_REWRITE_PROMPT(question, bot, conversationContext) }],
       });
 
       const text = completion.choices[0]?.message?.content || "";
@@ -644,8 +691,8 @@ export class ChatService {
     }
   }
 
-  private async retrieveCandidates({ chatbotId, question, conversationContext }: { chatbotId: string; question: string; conversationContext?: string | undefined }) {
-    const query = await this.rewriteQuery(question, conversationContext);
+  private async retrieveCandidates({ chatbotId, question, bot, conversationContext }: { chatbotId: string; question: string; bot: { name: string; description?: string | null; systemPrompt?: string | null }; conversationContext?: string | undefined }): Promise<{ matches: Array<{ id: string; content: string; metadata: Record<string, any>; score: number }>; topRelevance: number }> {
+    const query = await this.rewriteQuery(question, bot, conversationContext);
     const queryVector = await this.embeddings.embed(query);
     const targetHydrated = 20;
     let topK = 20;
@@ -683,8 +730,8 @@ export class ChatService {
       console.log(`[ChatService] Top score=${topScore}, normalized relevance=${relevance}, minRelevance=${env.RAG_MIN_RELEVANCE}`);
 
       if (relevance < env.RAG_MIN_RELEVANCE) {
-        console.log(`[ChatService] Relevance ${relevance} < ${env.RAG_MIN_RELEVANCE}, returning empty`);
-        return [];
+        console.log(`[ChatService] Relevance ${relevance} < ${env.RAG_MIN_RELEVANCE}, returning empty (topRelevance=${relevance})`);
+        return { matches: [], topRelevance: relevance };
       }
 
       if (hydrated.length < targetHydrated && rawMatches.length === topK && topK < maxTopK) {
@@ -698,12 +745,10 @@ export class ChatService {
           { chatbotId, requestedTopK: topK, raw: rawMatches.length },
           "All vector matches were non-hydratable (orphan vectors); returning empty to trigger unknown response",
         );
-        // Return empty instead of throwing - this will trigger the "unknown" response
-        // which is better UX than an error. Orphan vectors should be cleaned up separately.
-        return [];
+        return { matches: [], topRelevance: 0 };
       }
 
-      return hydrated;
+      return { matches: hydrated, topRelevance: relevance };
     }
   }
 
@@ -1102,6 +1147,32 @@ export class ChatService {
     } catch (err) {
       logger.error({ err, question }, "Failed to generate off-topic response");
       return UNKNOWN_MESSAGES.off_topic;
+    }
+  }
+
+  /**
+   * Generates a "did you mean...?" clarification when relevance is borderline.
+   */
+  private async generateClarifyIntentResponse(question: string, botName: string, botDescription?: string | null): Promise<string> {
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+        temperature: 0.7,
+        messages: [
+          { role: "user", content: CLARIFY_INTENT_PROMPT(question, botName, botDescription) },
+        ],
+      });
+
+      const text = completion.choices[0]?.message?.content || "";
+      const trimmed = text.trim();
+
+      if (trimmed.length > 10 && trimmed.length < 500) {
+        return trimmed;
+      }
+      return "Ich bin mir nicht ganz sicher, was Sie meinen. Könnten Sie Ihre Frage bitte nochmals anders formulieren?";
+    } catch (err) {
+      logger.error({ err, question }, "Failed to generate clarify-intent response");
+      return "Ich bin mir nicht ganz sicher, was Sie meinen. Könnten Sie Ihre Frage bitte nochmals anders formulieren?";
     }
   }
 
